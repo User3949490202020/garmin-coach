@@ -42,11 +42,17 @@ def mobile_friendly(fig):
     À appeler juste avant chaque st.plotly_chart(...).
     """
     fig.update_layout(
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.12, xanchor="center", x=0.5),
+        margin=dict(l=10, r=10, t=60, b=10),
         autosize=True,
     )
     return fig
+
+
+# Barre d'outils Plotly (appareil photo, zoom, pan...) masquée partout : sur
+# mobile elle prend de la place et peut chevaucher la légende sans vraiment
+# servir (le zoom tactile fonctionne déjà nativement au doigt).
+PLOTLY_CONFIG = {"displayModeBar": False}
 
 # Mode local mono-utilisateur (toi, avec ton .env) : si les identifiants sont
 # dans le .env, on saute directement le formulaire de connexion, comme avant.
@@ -73,18 +79,11 @@ with st.sidebar:
             with st.form("garmin_login"):
                 email_input = st.text_input("Email Garmin Connect")
                 password_input = st.text_input("Mot de passe Garmin Connect", type="password")
-                gemini_key_input = st.text_input(
-                    "Ta clé Gemini personnelle (optionnel)", type="password",
-                    help="Laisse vide pour utiliser la clé partagée de l'appli. Mets la tienne "
-                         "(gratuite sur aistudio.google.com) si tu préfères ton propre quota."
-                )
                 submitted = st.form_submit_button("Se connecter")
             if submitted:
                 if email_input and password_input:
                     st.session_state.garmin_email = email_input
                     st.session_state.garmin_password = password_input
-                    if gemini_key_input:
-                        st.session_state.own_gemini_key = gemini_key_input
                     st.rerun()
                 else:
                     st.error("Renseigne ton email et ton mot de passe Garmin.")
@@ -264,7 +263,7 @@ with tab_strava:
                               marker_color="royalblue"))
         fig.add_trace(go.Scatter(x=weekly["week_start"], y=weekly["moyenne_glissante_4sem_km"],
                                   name="Moyenne 4 sem.", line=dict(color="orange", width=3)))
-        st.plotly_chart(mobile_friendly(fig), width='stretch')
+        st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("Dénivelé par semaine")
         st.caption("Même principe pour le dénivelé positif cumulé chaque semaine (6 derniers mois).")
@@ -275,7 +274,7 @@ with tab_strava:
         fig_elev.add_trace(go.Scatter(x=weekly_recent["week_start"], y=weekly_recent["moyenne_glissante_4sem_elevation"],
                                        name="Moyenne 4 sem.", line=dict(color="darkorange", width=3)))
         fig_elev.update_layout(yaxis_title="Dénivelé (m)")
-        st.plotly_chart(mobile_friendly(fig_elev), width='stretch')
+        st.plotly_chart(mobile_friendly(fig_elev), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("🏆 Records personnels (6 derniers mois)")
         records_5k = analysis.best_effort_by_distance(activities, 5, months=6)
@@ -333,7 +332,7 @@ with tab_strava:
                 xaxis=dict(showticklabels=False),
                 height=250, margin=dict(t=10, b=10),
             )
-            st.plotly_chart(mobile_friendly(fig_cal), width='stretch')
+            st.plotly_chart(mobile_friendly(fig_cal), width='stretch', config=PLOTLY_CONFIG)
 
 # ----------------------------------------------------------------------
 # Séances
@@ -349,7 +348,7 @@ with tab_seances:
         if not eff.empty:
             fig = px.line(eff, x="date", y="efficacite", line_shape="spline", markers=True)
             fig.update_traces(line=dict(width=3, color="royalblue"))
-            st.plotly_chart(mobile_friendly(fig), width='stretch')
+            st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("Historique des séances")
         display_df = activities.sort_values("date", ascending=False).copy()
@@ -400,7 +399,7 @@ with tab_seances:
                 hovertemplate="%{x|%d/%m}<br>Ajustée: %{y:.2f} min/km<br>Température: %{customdata:.0f}°C<extra></extra>",
             ))
             fig_adj.update_layout(yaxis_title="Allure (min/km)", yaxis_autorange="reversed")
-            st.plotly_chart(mobile_friendly(fig_adj), width='stretch')
+            st.plotly_chart(mobile_friendly(fig_adj), width='stretch', config=PLOTLY_CONFIG)
             st.caption("⚠️ Approximation basée sur une règle empirique (~0.6 %/°C au-dessus de 15°C), "
                        "pas un calcul physiologique individualisé — à lire comme une tendance, pas une "
                        "vérité chiffrée exacte.")
@@ -418,7 +417,7 @@ with tab_recup:
             st.caption("Basé sur ta FC repos, ta HRV et ton Body Battery comparés à ta moyenne perso des 28 derniers jours.")
             fig = px.bar(rec, x="date", y="recovery_score", color="recovery_score",
                          color_continuous_scale=["red", "orange", "green"], range_color=[0, 100])
-            st.plotly_chart(mobile_friendly(fig), width='stretch')
+            st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         if not sleep.empty:
             st.subheader("Score de sommeil Garmin (6 derniers mois)")
@@ -435,7 +434,7 @@ with tab_recup:
                 # données) : ça évite de faire passer une petite variation pour
                 # un effondrement, en gardant l'échelle réaliste du score Garmin.
                 fig2.update_layout(yaxis=dict(range=[40, 100]))
-                st.plotly_chart(mobile_friendly(fig2), width='stretch')
+                st.plotly_chart(mobile_friendly(fig2), width='stretch', config=PLOTLY_CONFIG)
             else:
                 st.caption("Aucun score de sommeil exploitable sur les 6 derniers mois.")
                 with st.expander("🔧 Debug : voir les données brutes de la dernière nuit synchronisée"):
@@ -472,7 +471,7 @@ with tab_recup:
             fig3.add_trace(go.Scatter(x=hrv_df["date"], y=hrv_df["hrv_lisse"], name="HRV (lissée 3j)",
                                        line=dict(color="teal", width=3)))
             fig3.update_layout(yaxis_title="HRV (ms)")
-            st.plotly_chart(mobile_friendly(fig3), width='stretch')
+            st.plotly_chart(mobile_friendly(fig3), width='stretch', config=PLOTLY_CONFIG)
 
 # ----------------------------------------------------------------------
 # Charge d'entraînement / ACWR
@@ -504,7 +503,7 @@ with tab_charge:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=acwr_df.index, y=acwr_df["charge_aigue_7j"], name="Charge aiguë (7j)"))
         fig.add_trace(go.Scatter(x=acwr_df.index, y=acwr_df["charge_chronique_28j"], name="Charge chronique (28j)"))
-        st.plotly_chart(mobile_friendly(fig), width='stretch')
+        st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=acwr_df.index, y=acwr_df["acwr"], name="ACWR"))
@@ -513,7 +512,7 @@ with tab_charge:
         max_y = acwr_df["acwr"].max() if acwr_df["acwr"].notna().any() else 2
         fig2.add_hrect(y0=1.5, y1=max_y, fillcolor="red", opacity=0.1, line_width=0)
         fig2.update_layout(title="Ratio ACWR (zone verte = optimale)")
-        st.plotly_chart(mobile_friendly(fig2), width='stretch')
+        st.plotly_chart(mobile_friendly(fig2), width='stretch', config=PLOTLY_CONFIG)
 
         last_val = acwr_df["acwr"].dropna().iloc[-1] if acwr_df["acwr"].notna().any() else None
         zone = analysis.acwr_zone(last_val)
@@ -610,7 +609,7 @@ with tab_conseils:
                 prof_df = pd.DataFrame(profile)
                 fig_elev = px.area(prof_df, x="distance_km", y="elevation_m")
                 fig_elev.update_layout(yaxis_title="Altitude (m)", xaxis_title="Distance (km)")
-                st.plotly_chart(mobile_friendly(fig_elev), width='stretch')
+                st.plotly_chart(mobile_friendly(fig_elev), width='stretch', config=PLOTLY_CONFIG)
                 if pd.notna(active_race.get("elevation_gain")):
                     st.metric("Dénivelé positif total (D+)", f"{active_race['elevation_gain']:.0f} m")
 
