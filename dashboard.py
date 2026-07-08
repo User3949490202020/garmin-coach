@@ -47,7 +47,8 @@ with st.sidebar:
         garmin_email = ENV_EMAIL
         garmin_password = ENV_PASSWORD
         own_gemini_key = None
-        storage.init_db()
+        USER_DB_PATH = None  # base par défaut, mode local
+        storage.init_db(db_path=USER_DB_PATH)
     else:
         # Mode hébergé multi-utilisateurs : chacun se connecte avec SES identifiants Garmin.
         st.header("Connexion")
@@ -77,7 +78,11 @@ with st.sidebar:
         garmin_email = st.session_state.garmin_email
         garmin_password = st.session_state.garmin_password
         own_gemini_key = st.session_state.get("own_gemini_key")
-        storage.use_db_for_user(garmin_email)
+        # Chemin calculé explicitement à chaque script run, jamais stocké dans
+        # une variable globale partagée : c'est ce qui garantit qu'un usage
+        # simultané par plusieurs personnes ne mélange jamais leurs données.
+        USER_DB_PATH = storage.get_db_path_for_user(garmin_email)
+        storage.init_db(db_path=USER_DB_PATH)
 
         st.success(f"Connecté : {garmin_email}")
         if st.button("Se déconnecter"):
@@ -92,17 +97,18 @@ with st.sidebar:
     if st.button("🔄 Synchroniser avec Garmin maintenant"):
         with st.spinner("Récupération des données depuis Garmin Connect..."):
             try:
-                sync_module.run_sync(email=garmin_email, password=garmin_password, days=days)
+                sync_module.run_sync(email=garmin_email, password=garmin_password, days=days,
+                                     db_path=USER_DB_PATH)
                 st.success("Synchronisation réussie !")
             except Exception as e:
                 st.error(f"Erreur pendant la synchronisation : {e}")
     st.divider()
     st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données Garmin.")
 
-activities = storage.read_df("activities")
-wellness = storage.read_df("wellness")
-sleep = storage.read_df("sleep")
-laps = storage.read_df("laps")
+activities = storage.read_df("activities", db_path=USER_DB_PATH)
+wellness = storage.read_df("wellness", db_path=USER_DB_PATH)
+sleep = storage.read_df("sleep", db_path=USER_DB_PATH)
+laps = storage.read_df("laps", db_path=USER_DB_PATH)
 
 if activities.empty and wellness.empty:
     st.info("Aucune donnée pour l'instant. Clique sur "
@@ -159,7 +165,7 @@ with tab_coach:
             "Semi-marathon": analysis.best_effort_by_distance(activities, 21.1, months=6) if not activities.empty else None,
         }
         predictions_ctx = analysis.predict_race_times(activities, months=6) if not activities.empty else {}
-        races_ctx = storage.read_df("races")
+        races_ctx = storage.read_df("races", db_path=USER_DB_PATH)
 
         context_summary = coach_agent.build_context_summary(
             activities, wellness, weekly_ctx, records_ctx, acwr_latest_ctx, recovery_latest_ctx, laps,
@@ -531,11 +537,11 @@ with tab_conseils:
                     "distance_km": rdist,
                     "elevation_gain": elevation_gain,
                     "elevation_profile_json": profile_json,
-                })
+                }, db_path=USER_DB_PATH)
                 st.success(f"Course « {rname} » ajoutée !")
                 st.rerun()
 
-    races_df = storage.read_df("races")
+    races_df = storage.read_df("races", db_path=USER_DB_PATH)
     active_race = None
     if not races_df.empty:
         options = races_df["id"].tolist()
@@ -547,7 +553,7 @@ with tab_conseils:
         selected = st.selectbox("Sélectionne ta course de préparation", options=options,
                                 format_func=lambda i: labels[i], index=default_idx)
         if selected is not None:
-            storage.set_active_race(int(selected))
+            storage.set_active_race(int(selected), db_path=USER_DB_PATH)
             active_race = races_df[races_df["id"] == selected].iloc[0]
     else:
         st.caption("Aucune course enregistrée pour l'instant. Ajoute-en une ci-dessus pour un plan "

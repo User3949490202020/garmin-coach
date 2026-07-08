@@ -2,9 +2,14 @@
 storage.py
 ----------
 Petite base SQLite locale pour stocker l'historique.
-Pas de serveur, pas de cloud : un simple fichier `garmin_coach.db`
-à côté du projet. On peut donc re-synchroniser tous les jours sans
-jamais perdre l'historique déjà téléchargé.
+
+IMPORTANT (multi-utilisateurs) : chaque fonction accepte un paramètre
+optionnel `db_path`. Sans lui, on utilise la base par défaut (mode local
+mono-utilisateur avec .env). En mode hébergé multi-utilisateurs, le
+dashboard calcule le chemin propre à chaque personne connectée et le
+transmet explicitement à chaque appel — jamais via une variable globale
+partagée, qui serait dangereuse si plusieurs personnes utilisent l'appli
+en même temps (risque de mélanger les données de deux utilisateurs).
 """
 
 import sqlite3
@@ -13,22 +18,7 @@ import hashlib
 from pathlib import Path
 
 _BASE_DIR = Path(__file__).parent
-DB_PATH = _BASE_DIR / "garmin_coach.db"  # base par défaut (mode local mono-utilisateur avec .env)
-
-
-def use_db_for_user(email: str):
-    """
-    Bascule sur une base de données propre à cette personne (utile en mode
-    hébergé multi-utilisateurs, où chaque ami a ses propres identifiants
-    Garmin). Sans appel à cette fonction, l'appli utilise la base par défaut
-    (comportement local historique, inchangé).
-    """
-    global DB_PATH
-    data_dir = _BASE_DIR / "data"
-    data_dir.mkdir(exist_ok=True)
-    user_hash = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
-    DB_PATH = data_dir / f"garmin_coach_{user_hash}.db"
-    init_db()
+DEFAULT_DB_PATH = _BASE_DIR / "garmin_coach.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS activities (
@@ -88,9 +78,6 @@ CREATE TABLE IF NOT EXISTS races (
 );
 """
 
-# Colonnes ajoutées après la création initiale de la base : on les ajoute
-# automatiquement si elles manquent, pour que ta base existante se mette à
-# jour sans que tu aies à la supprimer.
 MIGRATIONS = {
     "activities": [
         ("temp_c", "REAL"),
@@ -99,14 +86,23 @@ MIGRATIONS = {
 }
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+def get_db_path_for_user(email: str) -> Path:
+    """Calcule (sans rien modifier globalement) le chemin de la base propre à cette personne."""
+    data_dir = _BASE_DIR / "data"
+    data_dir.mkdir(exist_ok=True)
+    user_hash = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
+    return data_dir / f"garmin_coach_{user_hash}.db"
+
+
+def get_conn(db_path=None):
+    path = db_path or DEFAULT_DB_PATH
+    conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-def init_db():
-    conn = get_conn()
+def init_db(db_path=None):
+    conn = get_conn(db_path)
     conn.executescript(SCHEMA)
     conn.commit()
 
@@ -119,8 +115,8 @@ def init_db():
     conn.close()
 
 
-def upsert_activity(row: dict):
-    conn = get_conn()
+def upsert_activity(row: dict, db_path=None):
+    conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO activities
            (activity_id, date, name, distance_km, duration_s, avg_pace_s_per_km,
@@ -139,8 +135,8 @@ def upsert_activity(row: dict):
     conn.close()
 
 
-def update_activity_weather(activity_id: str, temp_c, feels_like_c):
-    conn = get_conn()
+def update_activity_weather(activity_id: str, temp_c, feels_like_c, db_path=None):
+    conn = get_conn(db_path)
     conn.execute(
         "UPDATE activities SET temp_c = ?, feels_like_c = ? WHERE activity_id = ?",
         (temp_c, feels_like_c, activity_id),
@@ -149,8 +145,8 @@ def update_activity_weather(activity_id: str, temp_c, feels_like_c):
     conn.close()
 
 
-def upsert_sleep(row: dict):
-    conn = get_conn()
+def upsert_sleep(row: dict, db_path=None):
+    conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO sleep
            (date, sleep_score, total_sleep_s, deep_sleep_s, light_sleep_s, rem_sleep_s, awake_s, raw_json)
@@ -166,8 +162,8 @@ def upsert_sleep(row: dict):
     conn.close()
 
 
-def upsert_wellness(row: dict):
-    conn = get_conn()
+def upsert_wellness(row: dict, db_path=None):
+    conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO wellness
            (date, resting_hr, hrv_avg, body_battery_max, body_battery_min, stress_avg, steps)
@@ -183,9 +179,9 @@ def upsert_wellness(row: dict):
     conn.close()
 
 
-def replace_laps(activity_id: str, laps: list[dict]):
+def replace_laps(activity_id: str, laps: list[dict], db_path=None):
     """Remplace tous les tours d'une séance (supprime puis réinsère, plus simple qu'un upsert par tour)."""
-    conn = get_conn()
+    conn = get_conn(db_path)
     conn.execute("DELETE FROM laps WHERE activity_id = ?", (activity_id,))
     for lap in laps:
         conn.execute(
@@ -199,8 +195,8 @@ def replace_laps(activity_id: str, laps: list[dict]):
     conn.close()
 
 
-def add_race(row: dict):
-    conn = get_conn()
+def add_race(row: dict, db_path=None):
+    conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO races (name, date, distance_km, elevation_gain, elevation_profile_json)
            VALUES (:name, :date, :distance_km, :elevation_gain, :elevation_profile_json)
@@ -211,24 +207,24 @@ def add_race(row: dict):
     conn.close()
 
 
-def set_active_race(race_id: int):
-    conn = get_conn()
+def set_active_race(race_id: int, db_path=None):
+    conn = get_conn(db_path)
     conn.execute("UPDATE races SET is_active = 0")
     conn.execute("UPDATE races SET is_active = 1 WHERE id = ?", (race_id,))
     conn.commit()
     conn.close()
 
 
-def delete_race(race_id: int):
-    conn = get_conn()
+def delete_race(race_id: int, db_path=None):
+    conn = get_conn(db_path)
     conn.execute("DELETE FROM races WHERE id = ?", (race_id,))
     conn.commit()
     conn.close()
 
 
-def read_df(table: str):
+def read_df(table: str, db_path=None):
     import pandas as pd
-    conn = get_conn()
+    conn = get_conn(db_path)
     try:
         df = pd.read_sql(f"SELECT * FROM {table}", conn)
     finally:

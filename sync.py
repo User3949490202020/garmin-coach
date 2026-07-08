@@ -33,7 +33,7 @@ def duration_to_pace(duration_s, distance_km):
     return duration_s / distance_km  # secondes par km
 
 
-def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit=80):
+def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit=80, db_path=None):
     print(f"→ Récupération des activités de course des {months} derniers mois...")
     acts = client.get_running_activities_since(months=months)
     for a in acts:
@@ -52,7 +52,7 @@ def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit
             "elevation_gain": a.get("elevationGain"),
             "raw_json": json.dumps(a),
         }
-        storage.upsert_activity(row)
+        storage.upsert_activity(row, db_path=db_path)
     print(f"  {len(acts)} activités de course enregistrées.")
 
     # Récupère le détail des tours (allure/FC par km) sur les séances les plus
@@ -85,7 +85,7 @@ def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit
                         "max_hr": lap.get("maxHR"),
                     })
                 if laps_rows:
-                    storage.replace_laps(activity_id, laps_rows)
+                    storage.replace_laps(activity_id, laps_rows, db_path=db_path)
                     laps_synced += 1
 
         if idx < weather_limit:
@@ -97,7 +97,7 @@ def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit
                     dt_obj = dt.datetime.fromisoformat(start_time_str)
                     temp_c, feels_like_c = weather.get_weather_for_activity(lat, lon, dt_obj.date(), dt_obj.hour)
                     if temp_c is not None:
-                        storage.update_activity_weather(activity_id, temp_c, feels_like_c)
+                        storage.update_activity_weather(activity_id, temp_c, feels_like_c, db_path=db_path)
                         weather_synced += 1
                 except Exception:
                     pass
@@ -106,7 +106,7 @@ def sync_activities(client: GarminClient, months=6, laps_limit=15, weather_limit
     print(f"  Météo enregistrée pour {weather_synced} séances.")
 
 
-def sync_wellness(client: GarminClient, days=30):
+def sync_wellness(client: GarminClient, days=30, db_path=None):
     print(f"→ Récupération sommeil / FC repos / HRV / Body Battery sur {days} jours...")
     today = dt.date.today()
     for i in range(days):
@@ -137,7 +137,7 @@ def sync_wellness(client: GarminClient, days=30):
                 "rem_sleep_s": s.get("remSleepSeconds"),
                 "awake_s": s.get("awakeSleepSeconds"),
                 "raw_json": json.dumps(sleep),
-            })
+            }, db_path=db_path)
 
         # FC repos
         rhr_data = client.get_resting_hr(date)
@@ -175,23 +175,28 @@ def sync_wellness(client: GarminClient, days=30):
             "body_battery_min": bb_min,
             "stress_avg": stress_avg,
             "steps": steps,
-        })
+        }, db_path=db_path)
     print("  Données de récupération enregistrées.")
 
 
 def run_sync(email: str = None, password: str = None, days: int = 30,
-             activities_months: int = 6, weather_limit: int = 80):
+             activities_months: int = 6, weather_limit: int = 80, db_path=None):
     """
     Point d'entrée réutilisable (utilisé par le dashboard directement, sans
     passer par un sous-processus séparé — plus fiable, notamment en mode
     multi-utilisateurs où chaque personne a ses propres identifiants).
     Si email/password ne sont pas fournis, se rabat sur le fichier .env
     (comportement historique en mode local mono-utilisateur).
+
+    `db_path` doit être calculé par l'appelant (ex : dashboard.py, via
+    storage.get_db_path_for_user) et transmis explicitement — jamais deviné
+    ici, pour éviter tout risque de mélange entre utilisateurs en cas
+    d'usage simultané de l'appli.
     """
-    storage.init_db()
+    storage.init_db(db_path=db_path)
     client = GarminClient(email=email, password=password)
-    sync_activities(client, months=activities_months, weather_limit=weather_limit)
-    sync_wellness(client, days=days)
+    sync_activities(client, months=activities_months, weather_limit=weather_limit, db_path=db_path)
+    sync_wellness(client, days=days, db_path=db_path)
 
 
 def main():
