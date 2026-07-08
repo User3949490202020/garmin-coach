@@ -1,0 +1,9 @@
+garminconnect>=0.3.6
+pandas>=2.2
+numpy>=1.26
+streamlit>=1.37
+plotly>=5.22
+python-dotenv>=1.0
+google-genai>=0.3.0
+gpxpy>=1.6.0
+requests>=2.28
