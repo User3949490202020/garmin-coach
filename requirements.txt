@@ -1,4 +1,4 @@
-garminconnect>=0.3.6
+garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
 streamlit>=1.37

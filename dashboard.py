@@ -117,7 +117,12 @@ with st.sidebar:
     # demande du code et sa validation — en recréer un invaliderait le code.
     if st.session_state.get("mfa_pending"):
         st.warning("Ton compte Garmin a la double authentification (MFA) activée. "
-                   "Entre le code que tu viens de recevoir par SMS ou email.")
+                   "Entre le code de vérification à 6 chiffres.")
+        st.caption("Selon la méthode configurée sur ton compte Garmin, ce code arrive "
+                   "**par SMS**, **par email** (pense à vérifier tes spams), ou s'affiche "
+                   "dans ton **appli d'authentification** (Google Authenticator, Authy…). "
+                   "Si rien n'arrive au bout d'une minute, vérifie le numéro/email associé "
+                   "à ton compte Garmin, puis réessaie dans quelques minutes.")
         mfa_code_input = st.text_input("Code de vérification Garmin", key="mfa_code_field")
         if st.button("✅ Valider le code et synchroniser"):
             with st.spinner("Vérification du code et synchronisation..."):
