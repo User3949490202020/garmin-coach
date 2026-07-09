@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS races (
     elevation_profile_json TEXT,
     is_active INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS strava_tokens (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at INTEGER,
+    athlete_id TEXT
+);
 """
 
 MIGRATIONS = {
@@ -220,6 +228,46 @@ def delete_race(race_id: int, db_path=None):
     conn.execute("DELETE FROM races WHERE id = ?", (race_id,))
     conn.commit()
     conn.close()
+
+
+def save_strava_tokens(tokens: dict, db_path=None):
+    """Enregistre (ou met à jour) les jetons Strava pour cette base utilisateur."""
+    conn = get_conn(db_path)
+    conn.execute(
+        """INSERT INTO strava_tokens (id, access_token, refresh_token, expires_at, athlete_id)
+           VALUES (1, :access_token, :refresh_token, :expires_at, :athlete_id)
+           ON CONFLICT(id) DO UPDATE SET
+             access_token=excluded.access_token, refresh_token=excluded.refresh_token,
+             expires_at=excluded.expires_at, athlete_id=excluded.athlete_id
+        """,
+        {
+            "access_token": tokens.get("access_token"),
+            "refresh_token": tokens.get("refresh_token"),
+            "expires_at": tokens.get("expires_at"),
+            "athlete_id": tokens.get("athlete_id"),
+        },
+    )
+    conn.commit()
+    conn.close()
+
+
+def read_strava_tokens(db_path=None):
+    """Retourne les jetons Strava enregistrés (dict) ou None si absent."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT access_token, refresh_token, expires_at, athlete_id FROM strava_tokens WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {
+        "access_token": row[0],
+        "refresh_token": row[1],
+        "expires_at": row[2],
+        "athlete_id": row[3],
+    }
 
 
 def read_df(table: str, db_path=None):
