@@ -275,13 +275,9 @@ tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_conseils = st.tab
 with tab_coach:
     st.subheader("💬 Discute avec ton coach IA")
     st.caption("Pose des questions sur tes séances, ta récupération, ta progression : l'agent répond "
-               "en s'appuyant sur tes vraies données Garmin, pas sur des généralités.")
+               "en s'appuyant sur tes vraies données, pas sur des généralités.")
 
-    if active_source == "strava":
-        st.info("Le Coach IA n'est pas disponible avec une connexion **Strava** : les conditions "
-                "d'utilisation de Strava ne permettent pas de transmettre tes données à un service "
-                "d'IA tiers (Gemini). Il reste pleinement disponible pour les comptes Garmin.")
-    elif not os.getenv("GEMINI_API_KEY"):
+    if not os.getenv("GEMINI_API_KEY"):
         st.warning("Il manque une clé API Gemini. Ajoute `GEMINI_API_KEY=...` dans ton fichier "
                    "`.env` puis relance l'application. Voir le README pour savoir comment l'obtenir "
                    "(c'est gratuit, aucune carte bancaire requise).")
