@@ -105,12 +105,12 @@ class GarminClient:
         acts = self.get_activities(limit=limit)
         return [a for a in acts if "running" in (a.get("activityType", {}).get("typeKey", "") or "")]
 
-    def get_running_activities_since(self, months=6, max_activities=400, page_size=50):
+    def _activities_since(self, match, months=6, max_activities=400, page_size=50):
         """
-        Récupère les activités de course en remontant page par page jusqu'à
-        atteindre une activité plus vieille que `months` mois (au lieu de se
-        limiter à un nombre fixe d'activités, ce qui loupait les courses
-        anciennes si tu cours souvent).
+        Récupère les activités correspondant au filtre `match(activity)` en
+        remontant page par page jusqu'à atteindre une activité plus vieille que
+        `months` mois (au lieu de se limiter à un nombre fixe d'activités, ce
+        qui louperait les séances anciennes si tu t'entraînes souvent).
         """
         cutoff = dt.date.today() - dt.timedelta(days=int(months * 30.5))
         results = []
@@ -119,7 +119,7 @@ class GarminClient:
             batch = self.client.get_activities(start, page_size)
             if not batch:
                 break
-            results.extend(a for a in batch if "running" in (a.get("activityType", {}).get("typeKey", "") or ""))
+            results.extend(a for a in batch if match(a))
 
             oldest_date_str = (batch[-1].get("startTimeLocal") or "")[:10]
             reached_cutoff = False
@@ -135,6 +135,27 @@ class GarminClient:
             start += page_size
 
         return results[:max_activities]
+
+    @staticmethod
+    def _type_key(a):
+        return (a.get("activityType", {}) or {}).get("typeKey", "") or ""
+
+    def get_running_activities_since(self, months=6, max_activities=400, page_size=50):
+        """Séances de course (course à pied) des `months` derniers mois."""
+        return self._activities_since(
+            lambda a: "running" in self._type_key(a),
+            months=months, max_activities=max_activities, page_size=page_size,
+        )
+
+    def get_cross_training_since(self, months=6, max_activities=400, page_size=50):
+        """
+        Séances de renforcement / musculation des `months` derniers mois.
+        Garmin nomme ça `strength_training` (ou `functional_strength_training`).
+        """
+        return self._activities_since(
+            lambda a: "strength" in self._type_key(a),
+            months=months, max_activities=max_activities, page_size=page_size,
+        )
 
     def get_activity_splits(self, activity_id):
         """Détail des tours/splits d'une séance : allure, FC, cadence par km."""

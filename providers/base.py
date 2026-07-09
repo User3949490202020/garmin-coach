@@ -47,3 +47,12 @@ class DataProvider(ABC):
           - "sleep"    : dict pour la table `sleep`, ou None si pas de sommeil
         """
         return None
+
+    def get_cross_training(self, months: int = 6) -> list[dict]:
+        """
+        Séances de renforcement / musculation normalisées (colonnes de la table
+        `cross_training` : activity_id, date, sport, name, duration_s, avg_hr,
+        raw_json). Utilisées pour la charge d'entraînement, pas pour les vues
+        « course ». Par défaut : aucune (source qui ne les expose pas).
+        """
+        return []

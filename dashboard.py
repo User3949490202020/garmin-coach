@@ -253,6 +253,7 @@ activities = storage.read_df("activities", db_path=USER_DB_PATH)
 wellness = storage.read_df("wellness", db_path=USER_DB_PATH)
 sleep = storage.read_df("sleep", db_path=USER_DB_PATH)
 laps = storage.read_df("laps", db_path=USER_DB_PATH)
+cross_training = storage.read_df("cross_training", db_path=USER_DB_PATH)
 
 if activities.empty and wellness.empty:
     st.info("Aucune donnée pour l'instant. Clique sur "
@@ -296,14 +297,13 @@ with tab_coach:
 
         acwr_latest_ctx = None
         if not activities.empty:
-            loaded_ctx = analysis.training_load(activities)
-            daily_ctx = loaded_ctx.groupby(loaded_ctx["date"].dt.date)["load"].sum()
-            daily_ctx.index = pd.to_datetime(daily_ctx.index)
-            full_range_ctx = pd.date_range(daily_ctx.index.min(), pd.Timestamp.now().normalize(), freq="D")
-            daily_ctx = daily_ctx.reindex(full_range_ctx, fill_value=0)
-            acwr_df_ctx = analysis.acwr(daily_ctx)
-            if acwr_df_ctx["acwr"].notna().any():
-                acwr_latest_ctx = acwr_df_ctx["acwr"].dropna().iloc[-1]
+            daily_ctx = analysis.daily_training_load(activities, cross_training)
+            if not daily_ctx.empty:
+                full_range_ctx = pd.date_range(daily_ctx.index.min(), pd.Timestamp.now().normalize(), freq="D")
+                daily_ctx = daily_ctx.reindex(full_range_ctx, fill_value=0)
+                acwr_df_ctx = analysis.acwr(daily_ctx)
+                if acwr_df_ctx["acwr"].notna().any():
+                    acwr_latest_ctx = acwr_df_ctx["acwr"].dropna().iloc[-1]
 
         best_efforts_ctx = {
             "5 km": analysis.best_effort_by_distance(activities, 5, months=6) if not activities.empty else None,
@@ -316,6 +316,7 @@ with tab_coach:
         context_summary = coach_agent.build_context_summary(
             activities, wellness, weekly_ctx, records_ctx, acwr_latest_ctx, recovery_latest_ctx, laps,
             sleep=sleep, races=races_ctx, predictions=predictions_ctx, best_efforts=best_efforts_ctx,
+            cross_training=cross_training,
         )
 
         if "chat_session" not in st.session_state:
@@ -629,11 +630,13 @@ with tab_charge:
             "- **ACWR** = charge aiguë ÷ charge chronique. C'est le *ratio* qui compte, pas les valeurs brutes."
         )
 
-        loaded = analysis.training_load(activities)
-        daily = loaded.groupby(loaded["date"].dt.date)["load"].sum()
-        daily.index = pd.to_datetime(daily.index)
+        daily = analysis.daily_training_load(activities, cross_training)
         full_range = pd.date_range(daily.index.min(), pd.Timestamp.now().normalize(), freq="D")
         daily = daily.reindex(full_range, fill_value=0)
+        if not cross_training.empty:
+            st.caption(f"ℹ️ Inclut tes **{len(cross_training)} séances de renfo/muscu** : elles ajoutent "
+                       "une charge modérée (durée × intensité cardiaque ; intensité modérée supposée si "
+                       "la FC n'est pas mesurée).")
 
         acwr_df = analysis.acwr(daily)
         st.subheader("Charge aiguë (7j) vs charge chronique (28j)")
@@ -761,9 +764,7 @@ with tab_conseils:
 
     if not activities.empty:
         last_activity_date = activities["date"].max()
-        loaded = analysis.training_load(activities)
-        daily = loaded.groupby(loaded["date"].dt.date)["load"].sum()
-        daily.index = pd.to_datetime(daily.index)
+        daily = analysis.daily_training_load(activities, cross_training)
         full_range = pd.date_range(daily.index.min(), pd.Timestamp.now().normalize(), freq="D")
         daily = daily.reindex(full_range, fill_value=0)
         acwr_df = analysis.acwr(daily)

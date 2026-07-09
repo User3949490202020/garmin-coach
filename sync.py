@@ -83,6 +83,14 @@ def sync_wellness(provider: DataProvider, days=30, db_path=None):
     print("  Données de récupération enregistrées.")
 
 
+def sync_cross_training(provider: DataProvider, months=6, db_path=None):
+    print(f"→ Récupération des séances de renfo/muscu des {months} derniers mois...")
+    rows = provider.get_cross_training(months=months)
+    for r in rows:
+        storage.upsert_cross_training(r, db_path=db_path)
+    print(f"  {len(rows)} séances de renfo/muscu enregistrées.")
+
+
 def sync_data(provider: DataProvider, days: int = 30,
               activities_months: int = 6, weather_limit: int = 80, db_path=None):
     """
@@ -101,6 +109,7 @@ def sync_data(provider: DataProvider, days: int = 30,
     """
     storage.init_db(db_path=db_path)
     sync_activities(provider, months=activities_months, weather_limit=weather_limit, db_path=db_path)
+    sync_cross_training(provider, months=activities_months, db_path=db_path)
     sync_wellness(provider, days=days, db_path=db_path)
 
 

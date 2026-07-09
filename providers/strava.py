@@ -33,6 +33,9 @@ API_BASE = "https://www.strava.com/api/v3"
 # Types d'activités Strava considérés comme « course à pied ».
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 
+# Types Strava considérés comme renforcement / musculation (charge, hors course).
+STRENGTH_TYPES = {"WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining"}
+
 
 # ----------------------------------------------------------------------
 # OAuth2 (fonctions utilitaires réutilisées par le dashboard)
@@ -212,5 +215,41 @@ class StravaProvider(DataProvider):
                 "max_hr": lap.get("max_heartrate"),
             })
         return laps_rows or None
+
+    def get_cross_training(self, months: int = 6) -> list[dict]:
+        cutoff = dt.date.today() - dt.timedelta(days=int(months * 30.5))
+        rows = []
+        page = 1
+        while True:
+            batch = self._get("/athlete/activities",
+                              {"per_page": 100, "page": page})
+            if not batch:
+                break
+            reached_cutoff = False
+            for a in batch:
+                date_str = (a.get("start_date_local") or "")[:10]
+                if date_str:
+                    try:
+                        if dt.date.fromisoformat(date_str) < cutoff:
+                            reached_cutoff = True
+                            continue
+                    except ValueError:
+                        pass
+                t = a.get("sport_type") or a.get("type")
+                if t not in STRENGTH_TYPES:
+                    continue
+                rows.append({
+                    "activity_id": str(a.get("id")),
+                    "date": date_str,
+                    "sport": t,
+                    "name": a.get("name"),
+                    "duration_s": a.get("moving_time") or a.get("elapsed_time") or 0,
+                    "avg_hr": a.get("average_heartrate"),
+                    "raw_json": json.dumps(a),
+                })
+            if reached_cutoff or len(batch) < 100:
+                break
+            page += 1
+        return rows
 
     # get_wellness : hérite du défaut (retourne None) — Strava n'en fournit pas.
