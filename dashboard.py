@@ -129,8 +129,10 @@ if activities.empty and wellness.empty:
             "**Synchroniser avec Garmin maintenant** dans le menu de gauche.")
     st.stop()
 
-activities["date"] = pd.to_datetime(activities["date"]) if not activities.empty else activities
-wellness["date"] = pd.to_datetime(wellness["date"]) if not wellness.empty else wellness
+if not activities.empty:
+    activities["date"] = pd.to_datetime(activities["date"])
+if not wellness.empty:
+    wellness["date"] = pd.to_datetime(wellness["date"])
 
 tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_conseils = st.tabs(
     ["💬 Coach IA", "🔥 Stats Strava", "🏃 Séances", "😴 Récupération",
