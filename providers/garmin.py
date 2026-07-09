@@ -85,6 +85,21 @@ class GarminProvider(DataProvider):
             })
         return laps_rows or None
 
+    def get_cross_training(self, months: int = 6) -> list[dict]:
+        acts = self.client.get_cross_training_since(months=months)
+        rows = []
+        for a in acts:
+            rows.append({
+                "activity_id": str(a.get("activityId")),
+                "date": (a.get("startTimeLocal") or "")[:10],
+                "sport": (a.get("activityType", {}) or {}).get("typeKey") or "strength_training",
+                "name": a.get("activityName"),
+                "duration_s": a.get("duration") or 0,
+                "avg_hr": a.get("averageHR"),
+                "raw_json": json.dumps(a),
+            })
+        return rows
+
     def get_wellness(self, days: int = 30) -> list[dict]:
         today = dt.date.today()
         entries = []

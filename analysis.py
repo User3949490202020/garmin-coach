@@ -34,6 +34,46 @@ def training_load(activities_df: pd.DataFrame, hr_max=190, hr_rest=55) -> pd.Dat
     return df
 
 
+def training_load_cross(cross_df: pd.DataFrame, hr_max=190, hr_rest=55, default_hr=105) -> pd.DataFrame:
+    """
+    Charge d'une séance de renfo/muscu : même logique TRIMP que la course
+    (durée × intensité cardiaque), MAIS si la FC moyenne est absente (fréquent
+    en muscu, sans capteur), on suppose une intensité modérée-basse
+    (`default_hr`) au lieu de 0 — une séance de renfo fatigue même sans FC.
+    Résultat volontairement modeste par rapport à une séance de course.
+    """
+    df = cross_df.copy()
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"])
+    hr = df["avg_hr"].fillna(default_hr)
+    hrr = ((hr - hr_rest) / max(hr_max - hr_rest, 1)).clip(lower=0, upper=1.3)
+    df["load"] = (df["duration_s"] / 60) * hrr * 1.5
+    return df
+
+
+def daily_training_load(activities_df: pd.DataFrame, cross_df: pd.DataFrame = None) -> pd.Series:
+    """
+    Charge quotidienne totale (course + renfo/muscu), indexée par jour.
+    Centralise le calcul pour que l'onglet Charge et le contexte du coach IA
+    restent cohérents.
+    """
+    parts = []
+    run = training_load(activities_df)
+    if not run.empty:
+        parts.append(run[["date", "load"]])
+    if cross_df is not None and not cross_df.empty:
+        cross = training_load_cross(cross_df)
+        if not cross.empty:
+            parts.append(cross[["date", "load"]])
+    if not parts:
+        return pd.Series(dtype=float)
+    allp = pd.concat(parts, ignore_index=True)
+    daily = allp.groupby(allp["date"].dt.date)["load"].sum()
+    daily.index = pd.to_datetime(daily.index)
+    return daily.sort_index()
+
+
 def acwr(daily_load: pd.Series) -> pd.DataFrame:
     """
     daily_load : série indexée par date (une valeur par jour, 0 si repos)

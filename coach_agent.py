@@ -39,7 +39,8 @@ def get_client(api_key: str = None) -> genai.Client:
 def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, weekly: pd.DataFrame,
                            records: dict, acwr_latest, recovery_latest, laps: pd.DataFrame = None,
                            sleep: pd.DataFrame = None, races: pd.DataFrame = None,
-                           predictions: dict = None, best_efforts: dict = None, months: int = 6) -> str:
+                           predictions: dict = None, best_efforts: dict = None,
+                           cross_training: pd.DataFrame = None, months: int = 6) -> str:
     """Condense 6 mois de données en un résumé texte détaillé pour une analyse fine."""
     lines = []
     cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
@@ -79,6 +80,19 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
                         lh = f"{lap['avg_hr']:.0f}" if pd.notna(lap["avg_hr"]) else "N/A"
                         lap_strs.append(f"T{int(lap['lap_index'])}:{lap['distance_km']:.2f}km@{lp_str}(FC{lh})")
                     lines.append(f"  Tours : {' | '.join(lap_strs)}")
+
+    # --- Séances de renfo / musculation (comptent dans la charge/fatigue) ---
+    if cross_training is not None and not cross_training.empty:
+        ct = cross_training.copy()
+        ct["date"] = pd.to_datetime(ct["date"])
+        ct = ct[ct["date"] >= cutoff].sort_values("date", ascending=False)
+        if not ct.empty:
+            lines.append(f"\n### Séances de renfo/musculation ({len(ct)} au total, {months} derniers mois)")
+            lines.append("(comptent dans la charge d'entraînement et la fatigue, pas dans le volume de course)")
+            for _, c in ct.iterrows():
+                dur = f"{c['duration_s'] / 60:.0f} min" if pd.notna(c.get("duration_s")) else "N/A"
+                hr = f", FC moy {c['avg_hr']:.0f}" if pd.notna(c.get("avg_hr")) else ""
+                lines.append(f"- {c['date'].strftime('%d/%m/%Y')} : {c['name'] or 'Renfo'} — {dur}{hr}")
 
     # --- Records par distance et prédictions ---
     if best_efforts:

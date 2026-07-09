@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS races (
     is_active INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS cross_training (
+    activity_id TEXT PRIMARY KEY,
+    date TEXT,
+    sport TEXT,
+    name TEXT,
+    duration_s REAL,
+    avg_hr REAL,
+    raw_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS strava_tokens (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     access_token TEXT,
@@ -180,6 +190,23 @@ def upsert_wellness(row: dict, db_path=None):
              resting_hr=excluded.resting_hr, hrv_avg=excluded.hrv_avg,
              body_battery_max=excluded.body_battery_max, body_battery_min=excluded.body_battery_min,
              stress_avg=excluded.stress_avg, steps=excluded.steps
+        """,
+        row,
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_cross_training(row: dict, db_path=None):
+    """Enregistre une séance de renfo/muscu (discipline hors course à pied)."""
+    conn = get_conn(db_path)
+    conn.execute(
+        """INSERT INTO cross_training
+           (activity_id, date, sport, name, duration_s, avg_hr, raw_json)
+           VALUES (:activity_id, :date, :sport, :name, :duration_s, :avg_hr, :raw_json)
+           ON CONFLICT(activity_id) DO UPDATE SET
+             date=excluded.date, sport=excluded.sport, name=excluded.name,
+             duration_s=excluded.duration_s, avg_hr=excluded.avg_hr, raw_json=excluded.raw_json
         """,
         row,
     )
