@@ -229,4 +229,12 @@ def read_df(table: str, db_path=None):
         df = pd.read_sql(f"SELECT * FROM {table}", conn)
     finally:
         conn.close()
+    # Filet de sécurité pour les bases anciennes ou abîmées : si une table
+    # contient une colonne en double (ex : deux colonnes "date", héritées d'un
+    # schéma antérieur), df["date"] renverrait un DataFrame au lieu d'une Series
+    # et ferait planter les traitements en aval — typiquement
+    # `wellness["date"] = pd.to_datetime(...)` avec
+    # "ValueError: Columns must be same length as key". On ne conserve que la
+    # première occurrence de chaque colonne (sans effet sur une base saine).
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
