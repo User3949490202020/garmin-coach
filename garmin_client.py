@@ -23,35 +23,76 @@ load_dotenv()
 
 
 class GarminClient:
-    def __init__(self, email: str = None, password: str = None, mfa_code: str = None):
+    def __init__(self, email: str = None, password: str = None):
         self.email = email or os.getenv("GARMIN_EMAIL")
         self.password = password or os.getenv("GARMIN_PASSWORD")
         if not self.email or not self.password:
             raise RuntimeError(
                 "Identifiants Garmin manquants."
             )
-        # Si le compte a la double authentification (MFA) activée, Garmin
-        # demande un code (SMS/email) au moment de la connexion. On ne peut
-        # le transmettre qu'AVANT d'appeler login() : s'il n'est pas fourni,
-        # on laisse la librairie lever son erreur "MFA Required...", que
-        # l'appelant (sync.py / dashboard.py) attrape pour redemander le code.
-        prompt_mfa = (lambda: mfa_code) if mfa_code else None
-        self.client = Garmin(self.email, self.password, prompt_mfa=prompt_mfa)
-        self._login()
+        # La connexion est faite explicitement via login() (et non dans le
+        # constructeur) : c'est ce qui permet de gérer la double
+        # authentification (MFA) de façon "reprenable" côté web — voir plus bas.
+        self.client = None
 
-    def _login(self):
+    def _token_store(self) -> str:
         # Un fichier de token distinct par personne (basé sur son email), pour
         # que plusieurs utilisateurs sur la même appli ne se marchent pas dessus.
         import hashlib
         user_hash = hashlib.sha256(self.email.strip().lower().encode()).hexdigest()[:16]
-        token_store = Path.home() / f".garmin_coach_tokens_{user_hash}"
-        try:
-            # Essaie d'abord de réutiliser une session déjà connue
-            self.client.login(str(token_store))
-        except Exception:
-            # Sinon connexion complète + sauvegarde du token
-            self.client.login()
-            self.client.garth.dump(str(token_store))
+        return str(Path.home() / f".garmin_coach_tokens_{user_hash}")
+
+    def login(self, prompt_mfa=None) -> str:
+        """
+        Établit la connexion Garmin.
+
+        Retourne :
+          - "ok"        : connexion réussie (session en cache réutilisée, compte
+                          sans MFA, ou code MFA fourni via prompt_mfa en CLI).
+          - "needs_mfa" : le compte a la double authentification activée et
+                          Garmin vient d'envoyer un code par SMS/email. Il faut
+                          alors demander ce code à la personne puis appeler
+                          resume_with_mfa(code) sur CE MÊME objet — l'état MFA
+                          (session SSO en cours) est porté par l'objet client,
+                          donc en recréer un nouveau invaliderait le code.
+
+        `prompt_mfa` : uniquement pour un usage en ligne de commande (ex :
+                       input()). En mode web, laisser None : on utilise alors le
+                       flux reprenable (return_on_mfa) au lieu d'un callback
+                       bloquant qui ne survivrait pas à un rechargement de page.
+        """
+        token_store = self._token_store()
+        self.client = Garmin(
+            self.email, self.password,
+            prompt_mfa=prompt_mfa,
+            return_on_mfa=(prompt_mfa is None),
+        )
+        # login() tente d'abord de réutiliser la session en cache (token_store) ;
+        # sinon il se reconnecte avec les identifiants.
+        status, _ = self.client.login(token_store)
+        if status == "needs_mfa":
+            return "needs_mfa"
+        self._save_tokens()
+        return "ok"
+
+    def resume_with_mfa(self, mfa_code: str) -> None:
+        """
+        Termine une connexion MFA initiée par login() sur ce même objet.
+        Le premier argument (client_state) est ignoré par cette version de
+        garminconnect : l'état est déjà stocké sur l'objet client.
+        """
+        if self.client is None:
+            raise RuntimeError("Aucune connexion à reprendre : appelle login() d'abord.")
+        self.client.resume_login(None, mfa_code)
+        self._save_tokens()
+
+    def _save_tokens(self) -> None:
+        # Persiste la session pour éviter de redemander le MFA à chaque sync.
+        # (self.client est le wrapper Garmin ; self.client.client est le client
+        # bas-niveau qui expose dump().)
+        import contextlib
+        with contextlib.suppress(Exception):
+            self.client.client.dump(self._token_store())
 
     # ------------------------------------------------------------------
     # Activités (séances de course)

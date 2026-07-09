@@ -179,20 +179,12 @@ def sync_wellness(client: GarminClient, days=30, db_path=None):
     print("  Données de récupération enregistrées.")
 
 
-def run_sync(email: str = None, password: str = None, days: int = 30,
-             activities_months: int = 6, weather_limit: int = 80, db_path=None,
-             mfa_code: str = None):
+def sync_data(client: GarminClient, days: int = 30,
+              activities_months: int = 6, weather_limit: int = 80, db_path=None):
     """
-    Point d'entrée réutilisable (utilisé par le dashboard directement, sans
-    passer par un sous-processus séparé — plus fiable, notamment en mode
-    multi-utilisateurs où chaque personne a ses propres identifiants).
-    Si email/password ne sont pas fournis, se rabat sur le fichier .env
-    (comportement historique en mode local mono-utilisateur).
-
-    `mfa_code` : si le compte Garmin a la double authentification (MFA)
-    activée, un premier appel sans ce code lèvera une erreur explicite
-    ("MFA Required..."), à charge pour l'appelant de la rattraper, demander
-    le code à la personne, puis rappeler run_sync avec ce code renseigné.
+    Récupère et enregistre les données depuis un `client` DÉJÀ connecté.
+    Séparé de la connexion (login/MFA) pour que le dashboard puisse gérer la
+    double authentification en deux temps sans relancer une nouvelle session.
 
     `db_path` doit être calculé par l'appelant (ex : dashboard.py, via
     storage.get_db_path_for_user) et transmis explicitement — jamais deviné
@@ -200,9 +192,26 @@ def run_sync(email: str = None, password: str = None, days: int = 30,
     d'usage simultané de l'appli.
     """
     storage.init_db(db_path=db_path)
-    client = GarminClient(email=email, password=password, mfa_code=mfa_code)
     sync_activities(client, months=activities_months, weather_limit=weather_limit, db_path=db_path)
     sync_wellness(client, days=days, db_path=db_path)
+
+
+def run_sync(email: str = None, password: str = None, days: int = 30,
+             activities_months: int = 6, weather_limit: int = 80, db_path=None):
+    """
+    Point d'entrée en ligne de commande (mode local mono-utilisateur).
+    Si email/password ne sont pas fournis, se rabat sur le fichier .env.
+    Si le compte a la double authentification (MFA) activée, le code est
+    demandé directement dans le terminal.
+
+    Note : le dashboard n'utilise PAS cette fonction pour le MFA. Il appelle
+    client.login() / client.resume_with_mfa() puis sync_data(), afin de gérer
+    le code de vérification en deux étapes (voir dashboard.py).
+    """
+    client = GarminClient(email=email, password=password)
+    client.login(prompt_mfa=lambda: input("Code de vérification Garmin (SMS/email) : ").strip())
+    sync_data(client, days=days, activities_months=activities_months,
+              weather_limit=weather_limit, db_path=db_path)
 
 
 def main():
