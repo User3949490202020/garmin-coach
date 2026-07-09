@@ -19,7 +19,7 @@ import analysis
 import coach_agent
 import gpx_utils
 import sync as sync_module
-from garmin_client import GarminClient
+from providers.garmin import GarminProvider
 
 load_dotenv()
 
@@ -145,7 +145,7 @@ with st.sidebar:
             need_mfa = False
             with st.spinner("Connexion à Garmin Connect..."):
                 try:
-                    client = GarminClient(email=garmin_email, password=garmin_password)
+                    client = GarminProvider(email=garmin_email, password=garmin_password)
                     status = client.login()
                     st.session_state.garmin_client = client
                     if status == "needs_mfa":

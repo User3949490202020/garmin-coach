@@ -164,10 +164,11 @@ dashboard.py         # choix de la source + UX "wellness indisponible"
 
 ## 7. Plan de mise en œuvre (incrémental, sans casser Garmin)
 
-- **Phase 1 — Refactor sûr (aucun changement de comportement).** Créer
-  `providers/base.py` + `providers/garmin.py`, déplacer le parsing de `sync.py`
-  vers `GarminProvider`. Vérifier que la synchro Garmin marche **exactement**
-  comme avant. *Risque faible, 100 % testable en local.*
+- **✅ Phase 1 — Refactor sûr (FAITE).** Créé `providers/base.py` +
+  `providers/garmin.py` ; le parsing Garmin est sorti de `sync.py` vers
+  `GarminProvider`. `sync.py`/`dashboard.py` sont désormais agnostiques de la
+  marque. Comportement Garmin inchangé (chemin `sync_data` testé de bout en
+  bout hors-ligne). `garmin_client.py` (login/MFA) reste intact.
 - **Phase 2 — StravaProvider.** Enregistrer l'app Strava, coder l'OAuth +
   `get_activities`/`get_activity_laps`, mapping normalisé. Développé sur une
   **branche git** dédiée.
