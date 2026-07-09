@@ -1,3 +1,4 @@
+# Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
