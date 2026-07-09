@@ -177,9 +177,14 @@ dashboard.py         # choix de la source + UX "wellness indisponible"
   simulé). **Reste à faire côté propriétaire** : enregistrer l'app Strava pour
   obtenir `client_id`/`client_secret`. **Reste à coder** : Phase 3 (branchement
   dashboard) avant de pouvoir tester en réel.
-- **Phase 3 — UX.** Sélecteur de source dans la sidebar (Garmin / Strava),
-  message clair « récupération indisponible » pour les sources sans wellness,
-  gestion du point 6.7 (coach IA + Strava).
+- **🚧 Phase 3 — UX (code fait, branche `strava-provider`).** Sélecteur de
+  source Garmin/Strava dans la sidebar, retour OAuth Strava géré via
+  `st.query_params`, base par utilisateur dérivée de l'`athlete_id` Strava,
+  bouton de synchro Strava, message « récupération indisponible » (onglet
+  Récupération) et **Coach IA désactivé pour Strava** (point 6.7 : conditions
+  Strava vs envoi à Gemini). Validé hors-ligne via `AppTest` (rendu Garmin réel
+  + écran de choix Strava, sans erreur). **Reste** : app Strava enregistrée +
+  3 secrets, puis test réel de bout en bout (Phase 4).
 - **Phase 4 — Test réel + déploiement.** Un pote avec Suunto→Strava valide de
   bout en bout, puis merge sur `main` → redéploiement.
 

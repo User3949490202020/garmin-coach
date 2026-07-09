@@ -20,6 +20,7 @@ import coach_agent
 import gpx_utils
 import sync as sync_module
 from providers.garmin import GarminProvider
+from providers import strava
 
 load_dotenv()
 
@@ -27,10 +28,19 @@ load_dotenv()
 # os.environ comme en local avec un .env) : on fait le pont pour que le reste
 # du code (qui lit os.getenv) fonctionne pareil dans les deux cas.
 try:
-    if "GEMINI_API_KEY" in st.secrets and not os.getenv("GEMINI_API_KEY"):
-        os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+    for _key in ("GEMINI_API_KEY", "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET",
+                 "STRAVA_REDIRECT_URI"):
+        if _key in st.secrets and not os.getenv(_key):
+            os.environ[_key] = str(st.secrets[_key])
 except Exception:
     pass
+
+# Config Strava (renseignée par l'administrateur via secrets/.env). Si absente,
+# la connexion Strava est simplement masquée — le reste de l'appli fonctionne.
+STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
+STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
+STRAVA_REDIRECT_URI = os.getenv("STRAVA_REDIRECT_URI")
+STRAVA_CONFIGURED = bool(STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET and STRAVA_REDIRECT_URI)
 
 st.set_page_config(page_title="Coach Running Garmin", page_icon="🏃", layout="wide")
 
@@ -66,56 +76,132 @@ st.caption("Connecté à Garmin — analyse de tes séances, sommeil, FC et char
 
 with st.sidebar:
     if LOCAL_MODE:
+        active_source = "garmin"
         garmin_email = ENV_EMAIL
         garmin_password = ENV_PASSWORD
         own_gemini_key = None
         USER_DB_PATH = None  # base par défaut, mode local
         storage.init_db(db_path=USER_DB_PATH)
     else:
-        # Mode hébergé multi-utilisateurs : chacun se connecte avec SES identifiants Garmin.
+        # Mode hébergé multi-utilisateurs : chacun se connecte avec SA source
+        # (Garmin directement, ou Strava pour Suunto et les autres marques).
         st.header("Connexion")
-        if "garmin_email" not in st.session_state:
-            st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ils restent en mémoire "
-                       "le temps de ta session uniquement, ne sont jamais écrits sur le serveur.")
-            with st.form("garmin_login"):
-                email_input = st.text_input("Email Garmin Connect")
-                password_input = st.text_input("Mot de passe Garmin Connect", type="password")
-                submitted = st.form_submit_button("Se connecter")
-            if submitted:
-                if email_input and password_input:
-                    st.session_state.garmin_email = email_input
-                    st.session_state.garmin_password = password_input
-                    st.rerun()
+
+        # --- Retour de l'autorisation Strava (Strava renvoie sur ?code=...) ---
+        if (STRAVA_CONFIGURED and "code" in st.query_params
+                and "strava_tokens" not in st.session_state):
+            with st.spinner("Connexion à Strava..."):
+                try:
+                    _tok = strava.exchange_code(
+                        STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, st.query_params["code"])
+                    _db = storage.get_db_path_for_user(f"strava-{_tok['athlete_id']}")
+                    storage.init_db(db_path=_db)
+                    storage.save_strava_tokens(_tok, db_path=_db)
+                    st.session_state.strava_tokens = _tok
+                    st.session_state.active_source = "strava"
+                    st.session_state.pop("strava_error", None)
+                except Exception as e:
+                    # On mémorise l'erreur pour l'afficher après le rerun, et on
+                    # purge le `code` de l'URL : un code d'autorisation n'est
+                    # utilisable qu'une fois, inutile de retenter en boucle.
+                    st.session_state.strava_error = str(e)
+            # Toujours nettoyer l'URL puis relancer (succès comme échec).
+            st.query_params.clear()
+            st.rerun()
+
+        # Erreur de connexion Strava mémorisée lors d'un précédent essai.
+        if st.session_state.get("strava_error"):
+            st.error(f"Échec de la connexion Strava : {st.session_state.pop('strava_error')}")
+
+        connected_garmin = "garmin_email" in st.session_state
+        connected_strava = "strava_tokens" in st.session_state
+
+        # --- Aucune source connectée : proposer le choix Garmin / Strava ---
+        if not connected_garmin and not connected_strava:
+            src_g, src_s = st.tabs(["⌚ Garmin", "🔶 Strava (Suunto & autres)"])
+            with src_g:
+                st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ils restent en "
+                           "mémoire le temps de ta session uniquement, jamais écrits sur le serveur.")
+                with st.form("garmin_login"):
+                    email_input = st.text_input("Email Garmin Connect")
+                    password_input = st.text_input("Mot de passe Garmin Connect", type="password")
+                    submitted = st.form_submit_button("Se connecter")
+                if submitted:
+                    if email_input and password_input:
+                        st.session_state.garmin_email = email_input
+                        st.session_state.garmin_password = password_input
+                        st.session_state.active_source = "garmin"
+                        st.rerun()
+                    else:
+                        st.error("Renseigne ton email et ton mot de passe Garmin.")
+            with src_s:
+                st.caption("Pour les montres **Suunto**, Coros, Polar… synchronisées vers Strava. "
+                           "⚠️ La récupération (sommeil, HRV, FC repos) n'est **pas** disponible via Strava.")
+                if not STRAVA_CONFIGURED:
+                    st.info("La connexion Strava n'est pas encore configurée par l'administrateur de l'appli.")
                 else:
-                    st.error("Renseigne ton email et ton mot de passe Garmin.")
+                    st.link_button(
+                        "🔶 Se connecter avec Strava",
+                        strava.build_authorize_url(STRAVA_CLIENT_ID, STRAVA_REDIRECT_URI),
+                    )
             st.stop()
 
-        garmin_email = st.session_state.garmin_email
-        garmin_password = st.session_state.garmin_password
+        # --- Une source est connectée ---
+        active_source = st.session_state.get(
+            "active_source", "strava" if connected_strava else "garmin")
+        garmin_email = st.session_state.get("garmin_email")
+        garmin_password = st.session_state.get("garmin_password")
         own_gemini_key = st.session_state.get("own_gemini_key")
-        # Chemin calculé explicitement à chaque script run, jamais stocké dans
-        # une variable globale partagée : c'est ce qui garantit qu'un usage
-        # simultané par plusieurs personnes ne mélange jamais leurs données.
-        USER_DB_PATH = storage.get_db_path_for_user(garmin_email)
-        storage.init_db(db_path=USER_DB_PATH)
 
-        st.success(f"Connecté : {garmin_email}")
+        # Chemin de base calculé explicitement à chaque script run, jamais stocké
+        # dans une variable globale partagée : garantit qu'un usage simultané par
+        # plusieurs personnes ne mélange jamais leurs données.
+        if active_source == "strava":
+            _tok = st.session_state.strava_tokens
+            USER_DB_PATH = storage.get_db_path_for_user(f"strava-{_tok['athlete_id']}")
+            storage.init_db(db_path=USER_DB_PATH)
+            st.success(f"Connecté via Strava (athlète {_tok.get('athlete_id')})")
+        else:
+            USER_DB_PATH = storage.get_db_path_for_user(garmin_email)
+            storage.init_db(db_path=USER_DB_PATH)
+            st.success(f"Connecté : {garmin_email}")
+
         if st.button("Se déconnecter"):
             for key in ["garmin_email", "garmin_password", "own_gemini_key",
                        "chat_session", "gemini_client", "chat_display_history",
-                       "garmin_client", "mfa_pending"]:
+                       "garmin_client", "mfa_pending", "strava_tokens", "active_source"]:
                 st.session_state.pop(key, None)
+            st.query_params.clear()
             st.rerun()
         st.divider()
 
     st.header("Synchronisation")
     days = st.slider("Nombre de jours à synchroniser", 7, 90, 30)
 
-    # Double authentification (MFA) : Garmin envoie un code par SMS/email lors
-    # de la connexion, et ce code est lié à la session de connexion en cours.
+    if active_source == "strava":
+        if st.button("🔄 Synchroniser avec Strava maintenant"):
+            with st.spinner("Récupération de tes séances depuis Strava..."):
+                try:
+                    def _save_tokens(t):
+                        st.session_state.strava_tokens = t
+                        storage.save_strava_tokens(t, db_path=USER_DB_PATH)
+                    provider = strava.StravaProvider(
+                        st.session_state.strava_tokens,
+                        STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET,
+                        on_token_refresh=_save_tokens,
+                    )
+                    sync_module.sync_data(provider, days=days, db_path=USER_DB_PATH)
+                    st.success("Synchronisation réussie !")
+                except Exception as e:
+                    st.error(f"Erreur pendant la synchronisation Strava : {e}")
+        st.caption("Tes séances Suunto apparaissent dans Strava quelques minutes après la "
+                   "synchro de ta montre. La récupération (sommeil/HRV) n'est pas fournie par Strava.")
+
+    # Garmin — double authentification (MFA) : Garmin envoie un code par SMS/email
+    # lors de la connexion, et ce code est lié à la session de connexion en cours.
     # On garde donc le MÊME objet client (dans st.session_state) entre la
     # demande du code et sa validation — en recréer un invaliderait le code.
-    if st.session_state.get("mfa_pending"):
+    elif st.session_state.get("mfa_pending"):
         st.warning("Ton compte Garmin a la double authentification (MFA) activée. "
                    "Entre le code de vérification à 6 chiffres.")
         st.caption("Selon la méthode configurée sur ton compte Garmin, ce code arrive "
@@ -161,7 +247,7 @@ with st.sidebar:
             if need_mfa:
                 st.rerun()
     st.divider()
-    st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données Garmin.")
+    st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données.")
 
 activities = storage.read_df("activities", db_path=USER_DB_PATH)
 wellness = storage.read_df("wellness", db_path=USER_DB_PATH)
@@ -191,7 +277,11 @@ with tab_coach:
     st.caption("Pose des questions sur tes séances, ta récupération, ta progression : l'agent répond "
                "en s'appuyant sur tes vraies données Garmin, pas sur des généralités.")
 
-    if not os.getenv("GEMINI_API_KEY"):
+    if active_source == "strava":
+        st.info("Le Coach IA n'est pas disponible avec une connexion **Strava** : les conditions "
+                "d'utilisation de Strava ne permettent pas de transmettre tes données à un service "
+                "d'IA tiers (Gemini). Il reste pleinement disponible pour les comptes Garmin.")
+    elif not os.getenv("GEMINI_API_KEY"):
         st.warning("Il manque une clé API Gemini. Ajoute `GEMINI_API_KEY=...` dans ton fichier "
                    "`.env` puis relance l'application. Voir le README pour savoir comment l'obtenir "
                    "(c'est gratuit, aucune carte bancaire requise).")
@@ -455,7 +545,12 @@ with tab_seances:
 # ----------------------------------------------------------------------
 with tab_recup:
     if sleep.empty and wellness.empty:
-        st.info("Pas encore de données de sommeil/récupération.")
+        if active_source == "strava":
+            st.info("La récupération (sommeil, HRV, FC repos, Body Battery) n'est pas disponible "
+                    "via Strava. Ces données sont propres à l'écosystème de ta montre et ne "
+                    "transitent pas par Strava — cet onglet reste donc vide pour les comptes Strava.")
+        else:
+            st.info("Pas encore de données de sommeil/récupération.")
     else:
         rec = analysis.recovery_score(wellness) if not wellness.empty else pd.DataFrame()
         if not rec.empty:
