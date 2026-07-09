@@ -23,14 +23,20 @@ load_dotenv()
 
 
 class GarminClient:
-    def __init__(self, email: str = None, password: str = None):
+    def __init__(self, email: str = None, password: str = None, mfa_code: str = None):
         self.email = email or os.getenv("GARMIN_EMAIL")
         self.password = password or os.getenv("GARMIN_PASSWORD")
         if not self.email or not self.password:
             raise RuntimeError(
                 "Identifiants Garmin manquants."
             )
-        self.client = Garmin(self.email, self.password)
+        # Si le compte a la double authentification (MFA) activée, Garmin
+        # demande un code (SMS/email) au moment de la connexion. On ne peut
+        # le transmettre qu'AVANT d'appeler login() : s'il n'est pas fourni,
+        # on laisse la librairie lever son erreur "MFA Required...", que
+        # l'appelant (sync.py / dashboard.py) attrape pour redemander le code.
+        prompt_mfa = (lambda: mfa_code) if mfa_code else None
+        self.client = Garmin(self.email, self.password, prompt_mfa=prompt_mfa)
         self._login()
 
     def _login(self):

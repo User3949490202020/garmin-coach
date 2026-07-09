@@ -180,7 +180,8 @@ def sync_wellness(client: GarminClient, days=30, db_path=None):
 
 
 def run_sync(email: str = None, password: str = None, days: int = 30,
-             activities_months: int = 6, weather_limit: int = 80, db_path=None):
+             activities_months: int = 6, weather_limit: int = 80, db_path=None,
+             mfa_code: str = None):
     """
     Point d'entrée réutilisable (utilisé par le dashboard directement, sans
     passer par un sous-processus séparé — plus fiable, notamment en mode
@@ -188,13 +189,18 @@ def run_sync(email: str = None, password: str = None, days: int = 30,
     Si email/password ne sont pas fournis, se rabat sur le fichier .env
     (comportement historique en mode local mono-utilisateur).
 
+    `mfa_code` : si le compte Garmin a la double authentification (MFA)
+    activée, un premier appel sans ce code lèvera une erreur explicite
+    ("MFA Required..."), à charge pour l'appelant de la rattraper, demander
+    le code à la personne, puis rappeler run_sync avec ce code renseigné.
+
     `db_path` doit être calculé par l'appelant (ex : dashboard.py, via
     storage.get_db_path_for_user) et transmis explicitement — jamais deviné
     ici, pour éviter tout risque de mélange entre utilisateurs en cas
     d'usage simultané de l'appli.
     """
     storage.init_db(db_path=db_path)
-    client = GarminClient(email=email, password=password)
+    client = GarminClient(email=email, password=password, mfa_code=mfa_code)
     sync_activities(client, months=activities_months, weather_limit=weather_limit, db_path=db_path)
     sync_wellness(client, days=days, db_path=db_path)
 

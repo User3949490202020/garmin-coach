@@ -108,14 +108,39 @@ with st.sidebar:
 
     st.header("Synchronisation")
     days = st.slider("Nombre de jours à synchroniser", 7, 90, 30)
-    if st.button("🔄 Synchroniser avec Garmin maintenant"):
-        with st.spinner("Récupération des données depuis Garmin Connect..."):
-            try:
-                sync_module.run_sync(email=garmin_email, password=garmin_password, days=days,
-                                     db_path=USER_DB_PATH)
-                st.success("Synchronisation réussie !")
-            except Exception as e:
-                st.error(f"Erreur pendant la synchronisation : {e}")
+
+    # Si un compte a la double authentification (MFA) activée, une première
+    # tentative de synchro échoue avec une erreur explicite : on demande
+    # alors le code reçu par SMS/email et on relance la synchro avec.
+    if st.session_state.get("mfa_pending"):
+        st.warning("Ton compte Garmin a la double authentification (MFA) activée. "
+                   "Entre le code que tu viens de recevoir par SMS ou email.")
+        mfa_code_input = st.text_input("Code de vérification Garmin", key="mfa_code_field")
+        if st.button("✅ Valider le code et synchroniser"):
+            with st.spinner("Vérification du code et synchronisation..."):
+                try:
+                    sync_module.run_sync(email=garmin_email, password=garmin_password, days=days,
+                                         db_path=USER_DB_PATH, mfa_code=mfa_code_input)
+                    st.session_state.mfa_pending = False
+                    st.success("Synchronisation réussie !")
+                except Exception as e:
+                    if "MFA" in str(e):
+                        st.error("Code invalide ou expiré, réessaie.")
+                    else:
+                        st.error(f"Erreur pendant la synchronisation : {e}")
+    else:
+        if st.button("🔄 Synchroniser avec Garmin maintenant"):
+            with st.spinner("Récupération des données depuis Garmin Connect..."):
+                try:
+                    sync_module.run_sync(email=garmin_email, password=garmin_password, days=days,
+                                         db_path=USER_DB_PATH)
+                    st.success("Synchronisation réussie !")
+                except Exception as e:
+                    if "MFA" in str(e):
+                        st.session_state.mfa_pending = True
+                        st.rerun()
+                    else:
+                        st.error(f"Erreur pendant la synchronisation : {e}")
     st.divider()
     st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données Garmin.")
 
