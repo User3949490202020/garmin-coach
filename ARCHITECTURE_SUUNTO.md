@@ -169,9 +169,14 @@ dashboard.py         # choix de la source + UX "wellness indisponible"
   `GarminProvider`. `sync.py`/`dashboard.py` sont désormais agnostiques de la
   marque. Comportement Garmin inchangé (chemin `sync_data` testé de bout en
   bout hors-ligne). `garmin_client.py` (login/MFA) reste intact.
-- **Phase 2 — StravaProvider.** Enregistrer l'app Strava, coder l'OAuth +
-  `get_activities`/`get_activity_laps`, mapping normalisé. Développé sur une
-  **branche git** dédiée.
+- **🚧 Phase 2 — StravaProvider (code fait, branche `strava-provider`).**
+  `providers/strava.py` : OAuth (build_authorize_url / exchange_code /
+  refresh), `get_activities` + `get_activity_laps`, mapping normalisé (cadence
+  ×2, GPS, etc.), rafraîchissement auto du jeton. Stockage des jetons ajouté à
+  `storage.py` (table `strava_tokens` + save/read). Testé hors-ligne (HTTP
+  simulé). **Reste à faire côté propriétaire** : enregistrer l'app Strava pour
+  obtenir `client_id`/`client_secret`. **Reste à coder** : Phase 3 (branchement
+  dashboard) avant de pouvoir tester en réel.
 - **Phase 3 — UX.** Sélecteur de source dans la sidebar (Garmin / Strava),
   message clair « récupération indisponible » pour les sources sans wellness,
   gestion du point 6.7 (coach IA + Strava).
