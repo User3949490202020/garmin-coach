@@ -553,8 +553,25 @@ with tab_recup:
         if not rec.empty:
             st.subheader("Score de récupération quotidien")
             st.caption("Basé sur ta FC repos, ta HRV et ton Body Battery comparés à ta moyenne perso des 28 derniers jours.")
-            fig = px.bar(rec, x="date", y="recovery_score", color="recovery_score",
-                         color_continuous_scale=["red", "orange", "green"], range_color=[0, 100])
+            # 3 zones à couleur fixe (plutôt qu'un dégradé continu par barre,
+            # beaucoup moins lisible d'un coup d'œil) : 50 = ta moyenne perso.
+            def _recovery_zone(v):
+                if pd.isna(v):
+                    return "Donnée manquante"
+                if v < 35:
+                    return "Fatigue"
+                if v <= 65:
+                    return "Normal"
+                return "Bonne récup"
+            rec = rec.copy()
+            rec["zone"] = rec["recovery_score"].apply(_recovery_zone)
+            fig = px.bar(
+                rec, x="date", y="recovery_score", color="zone",
+                color_discrete_map={"Fatigue": "crimson", "Normal": "orange",
+                                    "Bonne récup": "seagreen", "Donnée manquante": "lightgray"},
+                category_orders={"zone": ["Fatigue", "Normal", "Bonne récup", "Donnée manquante"]},
+            )
+            fig.update_layout(legend_title_text="")
             st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         if not sleep.empty:
