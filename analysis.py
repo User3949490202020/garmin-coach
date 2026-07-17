@@ -128,17 +128,56 @@ def recovery_score(wellness_df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("date")
 
     def zscore(col):
+        if col not in df.columns:
+            return pd.Series(np.nan, index=df.index)
         mean = df[col].rolling(28, min_periods=5).mean()
         std = df[col].rolling(28, min_periods=5).std().replace(0, np.nan)
         return (df[col] - mean) / std
 
-    z_rhr = -zscore("resting_hr")      # FC repos plus basse = mieux
-    z_hrv = zscore("hrv_avg")          # HRV plus haut = mieux
-    z_bb = zscore("body_battery_max")  # Body battery plus haut = mieux
-
-    combined = pd.concat([z_rhr, z_hrv, z_bb], axis=1).mean(axis=1)
+    # Signaux principaux (poids fort) + signaux d'appoint (poids réduit) :
+    # le stress Garmin et le volume de pas affinent l'état de forme sans
+    # écraser les marqueurs physiologiques (FC repos, HRV, Body Battery).
+    signals = [
+        (-zscore("resting_hr"), 1.0),       # FC repos plus basse = mieux
+        (zscore("hrv_avg"), 1.0),           # HRV plus haut = mieux
+        (zscore("body_battery_max"), 1.0),  # Body battery plus haut = mieux
+        (-zscore("stress_avg"), 0.7),       # Stress plus bas = mieux
+        (-zscore("steps"), 0.4),            # Beaucoup plus de pas que d'habitude = fatigue en plus
+    ]
+    values = pd.concat([s for s, _ in signals], axis=1)
+    weights = np.array([w for _, w in signals])
+    # Moyenne pondérée en ignorant les signaux manquants jour par jour
+    mask = values.notna()
+    weighted_sum = (values.fillna(0) * weights).sum(axis=1)
+    weight_total = (mask * weights).sum(axis=1).replace(0, np.nan)
+    combined = weighted_sum / weight_total
     # Transforme le z-score combiné en score 0-100 (50 = dans la moyenne perso)
     df["recovery_score"] = (50 + combined * 15).clip(0, 100)
+    return df
+
+
+def session_intensity(activities_df: pd.DataFrame, hr_max=190) -> pd.DataFrame:
+    """
+    Classe chaque séance en Facile / Moyen / Dur d'après la FC moyenne
+    rapportée à la FC max (%FCmax) : <75% = facile, 75-85% = moyen, >85% = dur.
+    Sans FC mesurée, la séance est classée "Non classée".
+    """
+    df = activities_df.copy()
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"])
+    pct = df["avg_hr"] / hr_max
+
+    def label(p):
+        if pd.isna(p):
+            return "Non classée"
+        if p < 0.75:
+            return "Facile"
+        if p <= 0.85:
+            return "Moyen"
+        return "Dur"
+
+    df["intensite"] = pct.apply(label)
     return df
 
 

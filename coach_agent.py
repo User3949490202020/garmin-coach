@@ -40,7 +40,8 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
                            records: dict, acwr_latest, recovery_latest, laps: pd.DataFrame = None,
                            sleep: pd.DataFrame = None, races: pd.DataFrame = None,
                            predictions: dict = None, best_efforts: dict = None,
-                           cross_training: pd.DataFrame = None, months: int = 6) -> str:
+                           cross_training: pd.DataFrame = None,
+                           manual_sleep_note: tuple = None, months: int = 6) -> str:
     """Condense 6 mois de données en un résumé texte détaillé pour une analyse fine."""
     lines = []
     cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
@@ -153,7 +154,18 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
             for _, s in s_recent.iterrows():
                 score = f"{s['sleep_score']:.0f}" if pd.notna(s.get("sleep_score")) else "N/A"
                 total_h = f"{s['total_sleep_s']/3600:.1f}h" if pd.notna(s.get("total_sleep_s")) else "N/A"
-                lines.append(f"- {s['date'].strftime('%d/%m')} : score {score}, durée {total_h}")
+                nap = ""
+                if "nap_s" in s.index and pd.notna(s.get("nap_s")) and s["nap_s"] > 0:
+                    nap = f", sieste {s['nap_s']/60:.0f} min"
+                lines.append(f"- {s['date'].strftime('%d/%m')} : score {score}, durée {total_h}{nap}")
+
+    # --- Note sommeil saisie manuellement par l'athlète ---
+    if manual_sleep_note:
+        note_val, note_date = manual_sleep_note
+        lines.append(f"\n### Ressenti sommeil déclaré par l'athlète")
+        lines.append(f"- Note auto-évaluée : {note_val:.0f}/100 (saisie le {note_date}). "
+                     "À prendre en compte dans les conseils, surtout si les données "
+                     "automatiques de sommeil manquent ou la contredisent.")
 
     return "\n".join(lines) if lines else "Aucune donnée disponible pour l'instant."
 

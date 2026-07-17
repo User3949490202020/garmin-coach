@@ -94,12 +94,21 @@ CREATE TABLE IF NOT EXISTS strava_tokens (
     expires_at INTEGER,
     athlete_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS manual_notes (
+    key TEXT PRIMARY KEY,
+    value REAL,
+    updated_at TEXT
+);
 """
 
 MIGRATIONS = {
     "activities": [
         ("temp_c", "REAL"),
         ("feels_like_c", "REAL"),
+    ],
+    "sleep": [
+        ("nap_s", "REAL"),
     ],
 }
 
@@ -164,20 +173,47 @@ def update_activity_weather(activity_id: str, temp_c, feels_like_c, db_path=None
 
 
 def upsert_sleep(row: dict, db_path=None):
+    row = {"nap_s": None, **row}  # tolère les anciennes sources sans sieste
     conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO sleep
-           (date, sleep_score, total_sleep_s, deep_sleep_s, light_sleep_s, rem_sleep_s, awake_s, raw_json)
-           VALUES (:date, :sleep_score, :total_sleep_s, :deep_sleep_s, :light_sleep_s, :rem_sleep_s, :awake_s, :raw_json)
+           (date, sleep_score, total_sleep_s, deep_sleep_s, light_sleep_s, rem_sleep_s, awake_s, nap_s, raw_json)
+           VALUES (:date, :sleep_score, :total_sleep_s, :deep_sleep_s, :light_sleep_s, :rem_sleep_s, :awake_s, :nap_s, :raw_json)
            ON CONFLICT(date) DO UPDATE SET
              sleep_score=excluded.sleep_score, total_sleep_s=excluded.total_sleep_s,
              deep_sleep_s=excluded.deep_sleep_s, light_sleep_s=excluded.light_sleep_s,
-             rem_sleep_s=excluded.rem_sleep_s, awake_s=excluded.awake_s, raw_json=excluded.raw_json
+             rem_sleep_s=excluded.rem_sleep_s, awake_s=excluded.awake_s,
+             nap_s=excluded.nap_s, raw_json=excluded.raw_json
         """,
         row,
     )
     conn.commit()
     conn.close()
+
+
+def save_manual_note(key: str, value: float, db_path=None):
+    """Enregistre une note saisie à la main (ex: note sommeil 0-100), datée du jour."""
+    import datetime as _dt
+    conn = get_conn(db_path)
+    conn.execute(
+        """INSERT INTO manual_notes (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+        (key, value, _dt.date.today().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def read_manual_note(key: str, db_path=None):
+    """Retourne (valeur, date_de_saisie) ou None si jamais saisie."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value, updated_at FROM manual_notes WHERE key = ?", (key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return (row[0], row[1]) if row else None
 
 
 def upsert_wellness(row: dict, db_path=None):

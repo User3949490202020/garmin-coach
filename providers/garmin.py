@@ -129,6 +129,9 @@ class GarminProvider(DataProvider):
                     "light_sleep_s": s.get("lightSleepSeconds"),
                     "rem_sleep_s": s.get("remSleepSeconds"),
                     "awake_s": s.get("awakeSleepSeconds"),
+                    # Sieste : le champ a existé sous plusieurs noms selon les
+                    # versions de l'API Garmin, on tente les deux.
+                    "nap_s": s.get("napTimeSeconds") or sleep.get("napTimeSeconds"),
                     "raw_json": json.dumps(sleep),
                 }
 

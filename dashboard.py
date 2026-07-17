@@ -317,6 +317,7 @@ with tab_coach:
             activities, wellness, weekly_ctx, records_ctx, acwr_latest_ctx, recovery_latest_ctx, laps,
             sleep=sleep, races=races_ctx, predictions=predictions_ctx, best_efforts=best_efforts_ctx,
             cross_training=cross_training,
+            manual_sleep_note=storage.read_manual_note("sleep_note", db_path=USER_DB_PATH),
         )
 
         if "chat_session" not in st.session_state:
@@ -397,6 +398,27 @@ with tab_strava:
         fig.add_trace(go.Scatter(x=weekly["week_start"], y=weekly["moyenne_glissante_4sem_km"],
                                   name="Moyenne 4 sem.", line=dict(color="orange", width=3)))
         st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
+
+        st.subheader("Répartition des séances par intensité")
+        st.caption("Chaque semaine : combien de séances faciles (vert), moyennes (orange) et dures (rouge), "
+                   "d'après ta FC moyenne rapportée à ta FC max (<75% facile, 75-85% moyen, >85% dur). "
+                   "Un bon équilibre = beaucoup de vert, un peu d'orange, du rouge avec parcimonie.")
+        intens = analysis.session_intensity(activities)
+        intens_recent = intens[intens["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)].copy()
+        if not intens_recent.empty:
+            intens_recent["week_start"] = (intens_recent["date"] - pd.to_timedelta(
+                intens_recent["date"].dt.weekday, unit="D")).dt.normalize()
+            counts = (intens_recent.groupby(["week_start", "intensite"]).size()
+                      .reset_index(name="nb_seances"))
+            fig_int = px.bar(
+                counts, x="week_start", y="nb_seances", color="intensite",
+                color_discrete_map={"Facile": "seagreen", "Moyen": "orange",
+                                    "Dur": "crimson", "Non classée": "lightgray"},
+                category_orders={"intensite": ["Facile", "Moyen", "Dur", "Non classée"]},
+            )
+            fig_int.update_layout(barmode="stack", yaxis_title="Nb de séances",
+                                  xaxis_title="", legend_title_text="")
+            st.plotly_chart(mobile_friendly(fig_int), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("Dénivelé par semaine")
         st.caption("Même principe pour le dénivelé positif cumulé chaque semaine (6 derniers mois).")
@@ -541,6 +563,24 @@ with tab_seances:
 # Récupération
 # ----------------------------------------------------------------------
 with tab_recup:
+    # --- Note sommeil manuelle (0-100), persistée en base par utilisateur ---
+    # Saisie une fois, elle reste valable jusqu'à la prochaine saisie : pas
+    # besoin de la renseigner tous les jours. Utile aussi pour les comptes
+    # Strava (aucune donnée de sommeil automatique).
+    with st.expander("📝 Ma note sommeil (manuelle, 0-100)"):
+        existing_note = storage.read_manual_note("sleep_note", db_path=USER_DB_PATH)
+        if existing_note:
+            note_val, note_date = existing_note
+            st.caption(f"Dernière saisie : **{note_val:.0f}/100** le "
+                       f"{pd.to_datetime(note_date).strftime('%d/%m/%Y')} "
+                       "(reste valable jusqu'à ta prochaine saisie).")
+        note_input = st.slider("Comment tu évalues ton sommeil en ce moment ?", 0, 100,
+                               int(existing_note[0]) if existing_note else 70,
+                               key="manual_sleep_note")
+        if st.button("💾 Enregistrer ma note sommeil"):
+            storage.save_manual_note("sleep_note", float(note_input), db_path=USER_DB_PATH)
+            st.success("Note enregistrée ! Le coach IA la prendra en compte.")
+
     if sleep.empty and wellness.empty:
         if active_source == "strava":
             st.info("La récupération (sommeil, HRV, FC repos, Body Battery) n'est pas disponible "
@@ -674,6 +714,29 @@ with tab_charge:
         last_val = acwr_df["acwr"].dropna().iloc[-1] if acwr_df["acwr"].notna().any() else None
         zone = analysis.acwr_zone(last_val)
         st.metric("ACWR actuel", f"{last_val:.2f}" if last_val is not None else "N/A", help=zone)
+
+        # --- Synthèse en clair : que faire de cette charge, là maintenant ? ---
+        if last_val is not None:
+            acute_now = acwr_df["charge_aigue_7j"].iloc[-1]
+            chronic_now = acwr_df["charge_chronique_28j"].iloc[-1]
+            trend = "au-dessus" if acute_now > chronic_now else "en dessous"
+            if last_val < 0.8:
+                synthese = (f"🔵 **Ta charge récente est {trend} de ton habitude (ACWR {last_val:.2f}).** "
+                            "Tu es en sous-régime : c'est parfait si tu récupères ou sors de blessure, "
+                            "sinon tu peux augmenter progressivement le volume sans risque.")
+            elif last_val <= 1.3:
+                synthese = (f"🟢 **Charge bien dosée (ACWR {last_val:.2f}), continue comme ça.** "
+                            "Ta progression est dans la zone optimale : ni sous-entraînement, "
+                            "ni pic de charge dangereux.")
+            elif last_val <= 1.5:
+                synthese = (f"🟠 **Attention, ta charge grimpe vite (ACWR {last_val:.2f}).** "
+                            "Évite d'en rajouter cette semaine : maintiens ou allège légèrement "
+                            "pour laisser ton corps absorber.")
+            else:
+                synthese = (f"🔴 **Ralentis : ta charge récente est nettement trop élevée (ACWR {last_val:.2f}).** "
+                            "Le risque de blessure est réel — réduis le volume quelques jours "
+                            "et privilégie des sorties faciles.")
+            st.markdown(synthese)
 
         zone_explanations = {
             "Sous-entraînement": "Ta charge récente est plus basse que ton habitude : marge pour progresser sans risque particulier.",
