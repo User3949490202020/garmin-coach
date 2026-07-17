@@ -19,6 +19,7 @@ import analysis
 import coach_agent
 import gpx_utils
 import sync as sync_module
+import planner
 from providers.garmin import GarminProvider
 from providers import strava
 
@@ -265,9 +266,9 @@ if not activities.empty:
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_conseils = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_planif, tab_conseils = st.tabs(
     ["💬 Coach IA", "🔥 Stats Strava", "🏃 Séances", "😴 Récupération",
-     "📈 Charge d'entraînement", "💡 Recommandations"]
+     "📈 Charge d'entraînement", "🗓️ Planificateur", "💡 Recommandations"]
 )
 
 # ----------------------------------------------------------------------
@@ -750,6 +751,103 @@ with tab_charge:
             "Données insuffisantes": "Pas encore assez d'historique pour calculer ce ratio de façon fiable.",
         }
         st.info(zone_explanations.get(zone, ""))
+
+# ----------------------------------------------------------------------
+# Planificateur d'entraînement (programme ~3 mois recalculé en continu)
+# ----------------------------------------------------------------------
+with tab_planif:
+    st.subheader("🗓️ Ton programme d'entraînement")
+    st.caption("Construit à partir de TES données : volume de départ = ta moyenne réelle des "
+               "4 dernières semaines, allures cibles dérivées de ta forme actuelle, progression "
+               "prudente (+6 %/sem) avec une semaine allégée toutes les 4 semaines. Il se met à "
+               "jour tout seul après chaque synchronisation.")
+
+    # --- Critères (persistés : à régler une fois) ---
+    saved_nb = storage.read_manual_note("plan_nb_seances", db_path=USER_DB_PATH)
+    saved_day = storage.read_manual_note("plan_longrun_day", db_path=USER_DB_PATH)
+    pcol1, pcol2 = st.columns(2)
+    plan_nb = pcol1.slider("Combien de séances de course par semaine ?", 1, 7,
+                           int(saved_nb[0]) if saved_nb else 3, key="plan_nb")
+    plan_day = pcol2.selectbox("Jour de la sortie longue", list(range(7)),
+                               index=int(saved_day[0]) if saved_day else 6,
+                               format_func=lambda i: planner.FR_DAYS[i], key="plan_day")
+    if not saved_nb or int(saved_nb[0]) != plan_nb:
+        storage.save_manual_note("plan_nb_seances", float(plan_nb), db_path=USER_DB_PATH)
+    if not saved_day or int(saved_day[0]) != plan_day:
+        storage.save_manual_note("plan_longrun_day", float(plan_day), db_path=USER_DB_PATH)
+
+    # --- Course objectif : reprise automatique de la course active ---
+    plan_races = storage.read_df("races", db_path=USER_DB_PATH)
+    plan_race = None
+    if not plan_races.empty:
+        active_races = plan_races[plan_races["is_active"] == 1]
+        if not active_races.empty:
+            r = active_races.iloc[0]
+            plan_race = {"name": r["name"], "date": pd.to_datetime(r["date"]),
+                         "distance_km": r["distance_km"]}
+            st.success(f"🎯 Objectif pris en compte : **{r['name']}** le "
+                       f"{pd.to_datetime(r['date']).strftime('%d/%m/%Y')} ({r['distance_km']:.1f} km) "
+                       "— le plan intègre l'affûtage et la semaine de course.")
+    if plan_race is None:
+        st.caption("💡 Pas de course objectif : le plan vise une progression générale. Tu peux "
+                   "ajouter une course dans l'onglet **Recommandations** pour un plan orienté objectif.")
+
+    plan_preds = analysis.predict_race_times(activities, months=6) if not activities.empty else {}
+    plan = planner.build_plan(activities, plan_nb, plan_day, race=plan_race,
+                              predictions=plan_preds)
+
+    # --- Allures cibles ---
+    st.markdown("**Tes allures cibles** (dérivées de ta forme actuelle) :")
+    acol = st.columns(4)
+    for col, (label, key) in zip(acol, [("🟢 Facile", "facile"), ("🟠 Sortie longue", "longue"),
+                                        ("🔴 Seuil", "seuil"), ("🔴 VMA", "vma")]):
+        p = plan["paces"][key]
+        col.metric(label, f"{int(p // 60)}:{int(p % 60):02d}/km" if p else "sensations")
+
+    # --- Semaines en cours et à venir, détaillées jour par jour ---
+    def _week_detail(week, title, expanded=True):
+        with st.expander(title, expanded=expanded):
+            st.markdown(f"**Type : {week['type']}** — {week['km']:.0f} km sur "
+                        f"{week['nb_seances']} séance(s)")
+            rows = []
+            for s in week["sessions"]:
+                day_date = week["week_start"] + pd.Timedelta(days=s["jour"])
+                rows.append({
+                    "Jour": f"{planner.FR_DAYS[s['jour']]} {day_date.strftime('%d/%m')}",
+                    "Séance": f"{s['couleur']} {s['type']}",
+                    "Distance": f"{s['km']:.0f} km",
+                    "Allure": s["allure"],
+                    "Contenu": s["contenu"],
+                })
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+    week_now, week_next = plan["weeks"][0], plan["weeks"][1]
+    # Ce qui est déjà couru cette semaine, pour situer où on en est
+    if not activities.empty:
+        done = activities[activities["date"] >= week_now["week_start"]]
+        if not done.empty:
+            st.caption(f"📍 Déjà couru cette semaine : **{len(done)} séance(s), "
+                       f"{done['distance_km'].sum():.1f} km** sur les {week_now['km']:.0f} km prévus.")
+    _week_detail(week_now, f"📅 Semaine en cours (du {week_now['week_start'].strftime('%d/%m')})")
+    _week_detail(week_next, f"⏭️ Semaine prochaine (du {week_next['week_start'].strftime('%d/%m')})")
+
+    # --- Vue d'ensemble des ~3 mois ---
+    st.markdown("**Vue d'ensemble du programme :**")
+    overview = pd.DataFrame([{
+        "Semaine du": w["week_start"].strftime("%d/%m"),
+        "Type": {"Progression": "📈 Progression", "Stabilité": "➡️ Stabilité",
+                 "Récupération": "😴 Récupération", "Affûtage": "🪶 Affûtage",
+                 "Course": "🏁 Course"}.get(w["type"], w["type"]),
+        "Volume": f"{w['km']:.0f} km",
+        "Séances": w["nb_seances"],
+        "Séance clé": next((s["type"] for s in w["sessions"]
+                            if "Qualité" in s["type"] or "COURSE" in s["type"]),
+                           "Sortie longue"),
+    } for w in plan["weeks"]])
+    st.dataframe(overview, width='stretch', hide_index=True)
+    st.caption("⚠️ Ce plan est indicatif : il ne remplace pas l'écoute de ton corps. En cas de "
+               "douleur ou de score de récupération dans le rouge plusieurs jours, allège — "
+               "et demande son avis au Coach IA, il connaît ton programme ET ta forme du moment.")
 
 # ----------------------------------------------------------------------
 # Recommandations (+ gestion de course et phase d'entraînement)

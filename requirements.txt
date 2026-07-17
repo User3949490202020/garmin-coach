@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Saisie sommeil par nuit + courbe température sur l'indice météo.
+# Nouvel onglet Planificateur (programme 3 mois).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
