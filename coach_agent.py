@@ -157,7 +157,9 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
                 nap = ""
                 if "nap_s" in s.index and pd.notna(s.get("nap_s")) and s["nap_s"] > 0:
                     nap = f", sieste {s['nap_s']/60:.0f} min"
-                lines.append(f"- {s['date'].strftime('%d/%m')} : score {score}, durée {total_h}{nap}")
+                manual = " (auto-évaluée par l'athlète, montre non portée)" \
+                    if "manual" in str(s.get("raw_json") or "") else ""
+                lines.append(f"- {s['date'].strftime('%d/%m')} : score {score}, durée {total_h}{nap}{manual}")
 
     # --- Note sommeil saisie manuellement par l'athlète ---
     if manual_sleep_note:

@@ -317,7 +317,6 @@ with tab_coach:
             activities, wellness, weekly_ctx, records_ctx, acwr_latest_ctx, recovery_latest_ctx, laps,
             sleep=sleep, races=races_ctx, predictions=predictions_ctx, best_efforts=best_efforts_ctx,
             cross_training=cross_training,
-            manual_sleep_note=storage.read_manual_note("sleep_note", db_path=USER_DB_PATH),
         )
 
         if "chat_session" not in st.session_state:
@@ -553,7 +552,18 @@ with tab_seances:
                 customdata=adj["temp_c"],
                 hovertemplate="%{x|%d/%m}<br>Ajustée: %{y:.2f} min/km<br>Température: %{customdata:.0f}°C<extra></extra>",
             ))
-            fig_adj.update_layout(yaxis_title="Allure (min/km)", yaxis_autorange="reversed")
+            # 3e courbe : la température de chaque séance, sur un axe séparé (°C à
+            # droite) — on visualise d'un coup d'œil quand la chaleur explique
+            # l'écart entre allure brute et allure ajustée.
+            fig_adj.add_trace(go.Scatter(
+                x=adj["date"], y=adj["temp_c"], name="Température (°C)", yaxis="y2",
+                mode="lines+markers", line=dict(color="goldenrod", width=2), opacity=0.7,
+                hovertemplate="%{x|%d/%m}<br>%{y:.0f}°C<extra></extra>",
+            ))
+            fig_adj.update_layout(
+                yaxis_title="Allure (min/km)", yaxis_autorange="reversed",
+                yaxis2=dict(title="°C", overlaying="y", side="right", showgrid=False),
+            )
             st.plotly_chart(mobile_friendly(fig_adj), width='stretch', config=PLOTLY_CONFIG)
             st.caption("⚠️ Approximation basée sur une règle empirique (~0.6 %/°C au-dessus de 15°C), "
                        "pas un calcul physiologique individualisé — à lire comme une tendance, pas une "
@@ -563,23 +573,36 @@ with tab_seances:
 # Récupération
 # ----------------------------------------------------------------------
 with tab_recup:
-    # --- Note sommeil manuelle (0-100), persistée en base par utilisateur ---
-    # Saisie une fois, elle reste valable jusqu'à la prochaine saisie : pas
-    # besoin de la renseigner tous les jours. Utile aussi pour les comptes
-    # Strava (aucune donnée de sommeil automatique).
-    with st.expander("📝 Ma note sommeil (manuelle, 0-100)"):
-        existing_note = storage.read_manual_note("sleep_note", db_path=USER_DB_PATH)
-        if existing_note:
-            note_val, note_date = existing_note
-            st.caption(f"Dernière saisie : **{note_val:.0f}/100** le "
-                       f"{pd.to_datetime(note_date).strftime('%d/%m/%Y')} "
-                       "(reste valable jusqu'à ta prochaine saisie).")
-        note_input = st.slider("Comment tu évalues ton sommeil en ce moment ?", 0, 100,
-                               int(existing_note[0]) if existing_note else 70,
-                               key="manual_sleep_note")
-        if st.button("💾 Enregistrer ma note sommeil"):
-            storage.save_manual_note("sleep_note", float(note_input), db_path=USER_DB_PATH)
-            st.success("Note enregistrée ! Le coach IA la prendra en compte.")
+    # --- Saisie manuelle d'une nuit (montre non portée) ---
+    # La synchro Garmin reste la référence : la saisie manuelle comble les
+    # trous nuit par nuit, et si Garmin a une vraie mesure pour cette date,
+    # elle reprend le dessus à la prochaine synchro. Les nuits saisies entrent
+    # dans le graphique de sommeil et le contexte du coach IA comme les autres.
+    with st.expander("📝 Saisir une nuit à la main (montre non portée)"):
+        manual_date = st.date_input("Nuit du", value=dt.date.today() - dt.timedelta(days=1),
+                                    max_value=dt.date.today(), key="manual_sleep_date")
+        manual_score = st.slider("Note sommeil (0-100)", 0, 100, 70, key="manual_sleep_score")
+        manual_hours = st.number_input("Durée dormie (heures)", min_value=0.0, max_value=14.0,
+                                       value=7.5, step=0.5, key="manual_sleep_hours")
+        if st.button("💾 Enregistrer cette nuit"):
+            date_iso = manual_date.isoformat()
+            already = sleep[sleep["date"].astype(str).str[:10] == date_iso] if not sleep.empty else pd.DataFrame()
+            is_garmin_row = (not already.empty
+                             and "manual" not in str(already.iloc[0].get("raw_json") or ""))
+            if is_garmin_row:
+                st.warning("Ta montre a déjà mesuré cette nuit-là — la donnée Garmin est "
+                           "conservée (pas besoin de saisie manuelle).")
+            else:
+                storage.upsert_sleep({
+                    "date": date_iso,
+                    "sleep_score": float(manual_score),
+                    "total_sleep_s": manual_hours * 3600,
+                    "deep_sleep_s": None, "light_sleep_s": None,
+                    "rem_sleep_s": None, "awake_s": None, "nap_s": None,
+                    "raw_json": json.dumps({"manual": True}),
+                }, db_path=USER_DB_PATH)
+                st.success(f"Nuit du {manual_date.strftime('%d/%m/%Y')} enregistrée !")
+                st.rerun()
 
     if sleep.empty and wellness.empty:
         if active_source == "strava":

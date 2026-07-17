@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Fatigue affinée (stress/pas/siestes) + note sommeil manuelle + synthèse ACWR.
+# Saisie sommeil par nuit + courbe température sur l'indice météo.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
