@@ -469,25 +469,6 @@ with tab_strava:
             for col, key in zip(pcols, ["10K", "Semi", "Marathon"]):
                 col.metric(key, preds[key]["temps_str"])
 
-        st.subheader("Calendrier d'activité")
-        st.caption("Chaque colonne = une semaine, chaque case = un jour. Plus c'est foncé, plus tu as couru loin ce jour-là.")
-        cal = analysis.activity_calendar(activities, weeks=26)
-        if not cal.empty:
-            cal["weekday"] = cal["date"].dt.weekday
-            cal["week_num"] = ((cal["date"] - cal["date"].min()).dt.days // 7)
-            pivot = cal.pivot_table(index="weekday", columns="week_num", values="distance_km", fill_value=0)
-            fig_cal = go.Figure(data=go.Heatmap(
-                z=pivot.values, colorscale="Greens", showscale=False,
-                hovertemplate="Distance: %{z:.1f} km<extra></extra>",
-            ))
-            fig_cal.update_layout(
-                yaxis=dict(tickmode="array", tickvals=list(range(7)),
-                           ticktext=["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]),
-                xaxis=dict(showticklabels=False),
-                height=250, margin=dict(t=10, b=10),
-            )
-            st.plotly_chart(mobile_friendly(fig_cal), width='stretch', config=PLOTLY_CONFIG)
-
 # ----------------------------------------------------------------------
 # Séances
 # ----------------------------------------------------------------------
