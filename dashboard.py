@@ -192,6 +192,8 @@ with st.sidebar:
                         on_token_refresh=_save_tokens,
                     )
                     sync_module.sync_data(provider, days=days, db_path=USER_DB_PATH)
+                    storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
+                                             db_path=USER_DB_PATH)
                     st.success("Synchronisation réussie !")
                 except Exception as e:
                     st.error(f"Erreur pendant la synchronisation Strava : {e}")
@@ -223,6 +225,8 @@ with st.sidebar:
                     else:
                         client.resume_with_mfa(mfa_code_input.strip())
                         sync_module.sync_data(client, days=days, db_path=USER_DB_PATH)
+                        storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
+                                                 db_path=USER_DB_PATH)
                         st.session_state.mfa_pending = False
                         st.success("Synchronisation réussie !")
                 except Exception as e:
@@ -240,6 +244,8 @@ with st.sidebar:
                         need_mfa = True
                     else:
                         sync_module.sync_data(client, days=days, db_path=USER_DB_PATH)
+                        storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
+                                                 db_path=USER_DB_PATH)
                         st.success("Synchronisation réussie !")
                 except Exception as e:
                     st.error(f"Erreur pendant la synchronisation : {e}")
@@ -247,6 +253,53 @@ with st.sidebar:
             # contrôle que le except ne doit pas intercepter.
             if need_mfa:
                 st.rerun()
+
+    # --- Synchronisation automatique à l'ouverture ---
+    # Une seule tentative par session de navigation, et uniquement si la
+    # dernière synchro date de plus de 6 h : inutile de solliciter Garmin/
+    # Strava à chaque rechargement (risque de limitation 429 côté Garmin).
+    if not st.session_state.get("auto_sync_done") and not st.session_state.get("mfa_pending"):
+        st.session_state.auto_sync_done = True
+        _last = storage.read_manual_note("last_sync_ts", db_path=USER_DB_PATH)
+        _stale = _last is None or (dt.datetime.now().timestamp() - _last[0]) > 6 * 3600
+        if _stale:
+            with st.spinner("🔄 Synchronisation automatique en cours..."):
+                try:
+                    if active_source == "strava":
+                        def _save_tokens_auto(t):
+                            st.session_state.strava_tokens = t
+                            storage.save_strava_tokens(t, db_path=USER_DB_PATH)
+                        _prov = strava.StravaProvider(
+                            st.session_state.strava_tokens,
+                            STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET,
+                            on_token_refresh=_save_tokens_auto)
+                        sync_module.sync_data(_prov, days=days, db_path=USER_DB_PATH)
+                        storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
+                                                 db_path=USER_DB_PATH)
+                        st.success("Données à jour !")
+                    else:
+                        _client = GarminProvider(email=garmin_email, password=garmin_password)
+                        _status = _client.login()
+                        st.session_state.garmin_client = _client
+                        if _status == "needs_mfa":
+                            st.session_state.mfa_pending = True
+                        else:
+                            sync_module.sync_data(_client, days=days, db_path=USER_DB_PATH)
+                            storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
+                                                     db_path=USER_DB_PATH)
+                            st.success("Données à jour !")
+                except Exception as e:
+                    st.warning(f"Synchro automatique impossible pour l'instant — tu peux "
+                               f"réessayer avec le bouton. ({e})")
+            if st.session_state.get("mfa_pending"):
+                st.rerun()
+
+    _last_sync = storage.read_manual_note("last_sync_ts", db_path=USER_DB_PATH)
+    if _last_sync:
+        _age_h = (dt.datetime.now().timestamp() - _last_sync[0]) / 3600
+        st.caption(f"Dernière synchro : il y a {'moins d’1 h' if _age_h < 1 else f'{int(_age_h)} h'} "
+                   "— synchro auto à l'ouverture si plus de 6 h.")
+
     st.divider()
     st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données.")
 
