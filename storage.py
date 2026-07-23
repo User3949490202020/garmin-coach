@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS manual_notes (
     value REAL,
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS text_notes (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+);
 """
 
 MIGRATIONS = {
@@ -210,6 +216,31 @@ def read_manual_note(key: str, db_path=None):
     try:
         row = conn.execute(
             "SELECT value, updated_at FROM manual_notes WHERE key = ?", (key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return (row[0], row[1]) if row else None
+
+
+def save_text_note(key: str, value: str, db_path=None):
+    """Enregistre un texte libre persistant (ex: objectif de l'athlète), daté du jour."""
+    import datetime as _dt
+    conn = get_conn(db_path)
+    conn.execute(
+        """INSERT INTO text_notes (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+        (key, value, _dt.date.today().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def read_text_note(key: str, db_path=None):
+    """Retourne (texte, date_de_saisie) ou None si jamais saisi."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value, updated_at FROM text_notes WHERE key = ?", (key,)
         ).fetchone()
     finally:
         conn.close()

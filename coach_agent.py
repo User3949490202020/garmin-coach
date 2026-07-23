@@ -41,10 +41,21 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
                            sleep: pd.DataFrame = None, races: pd.DataFrame = None,
                            predictions: dict = None, best_efforts: dict = None,
                            cross_training: pd.DataFrame = None,
-                           manual_sleep_note: tuple = None, months: int = 6) -> str:
+                           manual_sleep_note: tuple = None, objective: tuple = None,
+                           months: int = 6) -> str:
     """Condense 6 mois de données en un résumé texte détaillé pour une analyse fine."""
     lines = []
     cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
+
+    # --- Objectif de l'athlète (en tête : le coach doit TOUJOURS en tenir compte) ---
+    if objective and objective[0] and str(objective[0]).strip():
+        obj_text, obj_date = objective
+        lines.append("### 🎯 OBJECTIF ACTUEL DE L'ATHLÈTE (à garder en tête dans CHAQUE réponse)")
+        lines.append(f"{obj_text}")
+        if obj_date:
+            lines.append(f"(défini le {obj_date})")
+        lines.append("Oriente systématiquement tes conseils vers cet objectif, sans que "
+                     "l'athlète ait besoin de le rappeler.")
 
     # --- Course préparée et phase actuelle ---
     if races is not None and not races.empty:

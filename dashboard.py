@@ -332,6 +332,28 @@ with tab_coach:
     st.caption("Pose des questions sur tes séances, ta récupération, ta progression : l'agent répond "
                "en s'appuyant sur tes vraies données, pas sur des généralités.")
 
+    # --- Objectif persistant : le coach le connaît sans que tu le répètes ---
+    saved_obj = storage.read_text_note("objectif", db_path=USER_DB_PATH)
+    with st.expander("🎯 Mon objectif du moment"
+                     + (f" — défini le {pd.to_datetime(saved_obj[1]).strftime('%d/%m/%Y')}" if saved_obj else ""),
+                     expanded=not saved_obj):
+        st.caption("Écris ton objectif ici une fois : le coach en tiendra compte dans **toutes** ses "
+                   "réponses, sans que tu aies à le répéter à chaque message.")
+        obj_text = st.text_area(
+            "Ton objectif", value=saved_obj[0] if saved_obj else "",
+            placeholder="Ex : « Atteindre 70 km/semaine d'ici 3 semaines » — ou « Courir un 10 km "
+                        "en moins de 45 min le mois prochain » — ou « Reprendre en douceur après blessure ».",
+            key="objectif_field", height=80,
+        )
+        if st.button("💾 Enregistrer mon objectif"):
+            storage.save_text_note("objectif", obj_text.strip(), db_path=USER_DB_PATH)
+            # On repart d'une conversation neuve pour que le nouvel objectif soit
+            # pris en compte immédiatement (le contexte est figé au démarrage du chat).
+            for k in ["chat_session", "gemini_client"]:
+                st.session_state.pop(k, None)
+            st.success("Objectif enregistré ! Le coach en tient compte dès maintenant.")
+            st.rerun()
+
     if not os.getenv("GEMINI_API_KEY"):
         st.warning("Il manque une clé API Gemini. Ajoute `GEMINI_API_KEY=...` dans ton fichier "
                    "`.env` puis relance l'application. Voir le README pour savoir comment l'obtenir "
@@ -371,6 +393,7 @@ with tab_coach:
             activities, wellness, weekly_ctx, records_ctx, acwr_latest_ctx, recovery_latest_ctx, laps,
             sleep=sleep, races=races_ctx, predictions=predictions_ctx, best_efforts=best_efforts_ctx,
             cross_training=cross_training,
+            objective=storage.read_text_note("objectif", db_path=USER_DB_PATH),
         )
 
         if "chat_session" not in st.session_state:
