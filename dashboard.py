@@ -221,7 +221,10 @@ with st.sidebar:
         st.divider()
 
     st.header("Synchronisation")
-    days = st.slider("Nombre de jours à synchroniser", 7, 90, 30)
+    # Fenêtres de synchro fixes : 6 mois de séances, 30 jours de récupération
+    # (sommeil/FC repos/HRV). L'ancien curseur "nombre de jours" ne réglait que
+    # la récupération, ce qui était trompeur — retiré pour simplifier.
+    days = 30
 
     if active_source == "strava":
         if st.button("🔄 Synchroniser avec Strava maintenant"):
