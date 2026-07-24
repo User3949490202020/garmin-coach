@@ -174,6 +174,52 @@ def recovery_score(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame = None) -> 
     return df
 
 
+def tag_warmups(activities_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Repère les échauffements : jours à plusieurs courses où une sortie courte
+    (≤ 6 km) est suivie de près (≤ 60 min après sa fin) par une sortie plus
+    intense (FC plus haute ou allure nettement plus rapide) — le schéma
+    classique « footing d'échauffement puis séance de VMA dans la foulée ».
+    Ajoute une colonne booléenne `is_warmup` ; l'heure de départ est extraite
+    des données brutes (raw_json) déjà synchronisées.
+    """
+    import json as _json
+    df = activities_df.copy()
+    df["is_warmup"] = False
+    if df.empty or len(df) < 2:
+        return df
+    df["date"] = pd.to_datetime(df["date"])
+
+    def _start(row):
+        try:
+            raw = _json.loads(row.get("raw_json") or "{}")
+            s = raw.get("startTimeLocal") or raw.get("start_date_local") or ""
+            return pd.to_datetime(s.replace("Z", "")) if s else pd.NaT
+        except Exception:
+            return pd.NaT
+
+    df["_start"] = df.apply(_start, axis=1)
+    for _, grp in df.groupby(df["date"].dt.date):
+        if len(grp) < 2:
+            continue
+        g = grp.dropna(subset=["_start"]).sort_values("_start")
+        for i in range(len(g) - 1):
+            cur, nxt = g.iloc[i], g.iloc[i + 1]
+            cur_end = cur["_start"] + pd.Timedelta(seconds=float(cur["duration_s"] or 0))
+            gap_min = (nxt["_start"] - cur_end).total_seconds() / 60
+            if gap_min > 60 or (cur["distance_km"] or 0) > 6:
+                continue
+            harder = (
+                (pd.notna(nxt["avg_hr"]) and pd.notna(cur["avg_hr"])
+                 and nxt["avg_hr"] > cur["avg_hr"] + 5)
+                or (pd.notna(nxt["avg_pace_s_per_km"]) and pd.notna(cur["avg_pace_s_per_km"])
+                    and nxt["avg_pace_s_per_km"] < cur["avg_pace_s_per_km"] - 10)
+            )
+            if harder:
+                df.loc[cur.name, "is_warmup"] = True
+    return df.drop(columns=["_start"])
+
+
 def session_intensity(activities_df: pd.DataFrame, hr_max=190) -> pd.DataFrame:
     """
     Classe chaque séance en Facile / Moyen / Dur d'après la FC moyenne
@@ -183,6 +229,12 @@ def session_intensity(activities_df: pd.DataFrame, hr_max=190) -> pd.DataFrame:
     df = activities_df.copy()
     if df.empty:
         return df
+    # Les échauffements ne comptent pas comme des séances à part entière :
+    # ils sont fusionnés avec la séance de qualité qui les suit.
+    if "is_warmup" in df.columns:
+        df = df[~df["is_warmup"]]
+        if df.empty:
+            return df
     df["date"] = pd.to_datetime(df["date"])
     pct = df["avg_hr"] / hr_max
 
@@ -212,10 +264,17 @@ def weekly_stats(activities_df: pd.DataFrame) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"])
     df["week_start"] = (df["date"] - pd.to_timedelta(df["date"].dt.weekday, unit="D")).dt.normalize()
 
+    # Un échauffement + sa séance de VMA = UNE seule séance (les km comptent
+    # tous, mais on ne gonfle pas le nombre de séances de la semaine).
+    if "is_warmup" in df.columns:
+        df["_seance_unit"] = (~df["is_warmup"]).astype(int)
+    else:
+        df["_seance_unit"] = 1
+
     grouped = df.groupby("week_start").agg(
         distance_km=("distance_km", "sum"),
         duration_s=("duration_s", "sum"),
-        nb_seances=("activity_id", "count"),
+        nb_seances=("_seance_unit", "sum"),
         avg_hr=("avg_hr", "mean"),
         elevation_gain=("elevation_gain", "sum"),
     )

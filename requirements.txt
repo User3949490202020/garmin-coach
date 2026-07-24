@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Reconnexion auto + mémoire de conversation + siestes + renfo/étirements.
+# Détection des échauffements avant séances intenses.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

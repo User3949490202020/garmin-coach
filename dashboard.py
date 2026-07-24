@@ -371,6 +371,9 @@ if activities.empty and wellness.empty:
 
 if not activities.empty:
     activities["date"] = pd.to_datetime(activities["date"])
+    # Détecte les échauffements (footing doux juste avant une séance intense
+    # le même jour) : ils sont fusionnés avec leur séance dans les décomptes.
+    activities = analysis.tag_warmups(activities)
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
@@ -659,6 +662,9 @@ with tab_seances:
         display_df["jour"] = display_df["date"].apply(
             lambda d: coach_agent.FR_WEEKDAYS[d.weekday()].capitalize()
         )
+        if "is_warmup" in display_df.columns:
+            display_df["rôle"] = display_df["is_warmup"].map(
+                {True: "🔥 échauffement", False: ""})
         if "temp_c" in display_df.columns:
             display_df["météo"] = display_df.apply(
                 lambda r: (f"{r['temp_c']:.0f}°C (ressenti {r['feels_like_c']:.0f}°C)"
@@ -669,7 +675,7 @@ with tab_seances:
         else:
             display_df["météo"] = "N/A"
 
-        cols_to_show = ["date", "jour", "name", "distance_km", "allure_min_km",
+        cols_to_show = ["date", "jour", "name", "rôle", "distance_km", "allure_min_km",
                         "avg_hr", "avg_cadence", "elevation_gain", "météo"]
         st.dataframe(display_df[[c for c in cols_to_show if c in display_df.columns]], width='stretch')
         st.caption("La météo n'est récupérée automatiquement que pour les 15 séances les plus récentes "

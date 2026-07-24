@@ -78,9 +78,12 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
                 temp = f", {a['temp_c']:.0f}°C"
                 if pd.notna(a.get("feels_like_c")):
                     temp += f" (ressenti {a['feels_like_c']:.0f}°C)"
+            warmup = (" [ÉCHAUFFEMENT de la séance intense qui suit le même jour — "
+                      "à compter comme UNE seule séance avec elle]"
+                      if a.get("is_warmup") else "")
             lines.append(f"- {a['date'].strftime('%d/%m/%Y')} ({FR_WEEKDAYS[a['date'].weekday()]}) : "
                          f"{a['name']} — {a['distance_km']:.2f} km @ {pace_str}, FC moy {hr}, "
-                         f"D+ {elev} m{temp}")
+                         f"D+ {elev} m{temp}{warmup}")
 
             if laps is not None and not laps.empty:
                 activity_laps = laps[laps["activity_id"] == a["activity_id"]].sort_values("lap_index")
