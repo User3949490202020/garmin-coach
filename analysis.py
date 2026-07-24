@@ -236,19 +236,42 @@ def session_intensity(activities_df: pd.DataFrame, hr_max=190) -> pd.DataFrame:
         if df.empty:
             return df
     df["date"] = pd.to_datetime(df["date"])
-    pct = df["avg_hr"] / hr_max
+    pct_avg = df["avg_hr"] / hr_max
+    pct_max = (df["max_hr"] / hr_max) if "max_hr" in df.columns else pd.Series(np.nan, index=df.index)
 
-    def label(p):
-        if pd.isna(p):
+    # Une séance de VMA a une FC MOYENNE diluée par les récupérations entre
+    # fractions : la moyenne seule la classerait "Moyen". On regarde donc
+    # aussi le PIC : des pointes ≥ 93 % de la FCmax avec une moyenne déjà
+    # soutenue (≥ 76 %) = séance dure, quelle que soit la moyenne.
+    def label(i):
+        pa, pm = pct_avg.loc[i], pct_max.loc[i]
+        if pd.isna(pa):
             return "Non classée"
-        if p < 0.75:
-            return "Facile"
-        if p <= 0.85:
+        if pa > 0.85 or (pd.notna(pm) and pm >= 0.93 and pa >= 0.76):
+            return "Dur"
+        if pa >= 0.75:
             return "Moyen"
-        return "Dur"
+        return "Facile"
 
-    df["intensite"] = pct.apply(label)
+    df["intensite"] = [label(i) for i in df.index]
     return df
+
+
+def observed_hr_max(activities_df: pd.DataFrame, months=6, default=190) -> int:
+    """
+    FC max observée sur les séances des `months` derniers mois (le plus haut
+    pic enregistré par la montre). Sert de valeur par défaut personnalisée,
+    que l'athlète peut corriger à la main s'il connaît sa vraie FCmax.
+    """
+    if activities_df is None or activities_df.empty or "max_hr" not in activities_df.columns:
+        return default
+    df = activities_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
+    observed = df[df["date"] >= cutoff]["max_hr"].max()
+    if pd.isna(observed):
+        return default
+    return int(min(max(observed, 150), 220))  # garde-fou contre les valeurs aberrantes
 
 
 def weekly_stats(activities_df: pd.DataFrame) -> pd.DataFrame:

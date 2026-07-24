@@ -378,6 +378,13 @@ if not activities.empty:
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
+# FC max de l'athlète : valeur corrigée à la main si renseignée (onglet Bonus),
+# sinon le plus haut pic observé sur ses 6 derniers mois. Utilisée partout où
+# on classe l'intensité des séances.
+_hr_saved = storage.read_manual_note("hr_max", db_path=USER_DB_PATH)
+HR_MAX_DETECTED = analysis.observed_hr_max(activities)
+HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
+
 tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_bonus = st.tabs(
     ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
      "📈 Charge & Risque", "✨ Bonus"]
@@ -551,10 +558,12 @@ with tab_strava:
         st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("Répartition des séances par intensité")
-        st.caption("Chaque semaine : combien de séances faciles (vert), moyennes (orange) et dures (rouge), "
-                   "d'après ta FC moyenne rapportée à ta FC max (<75% facile, 75-85% moyen, >85% dur). "
-                   "Un bon équilibre = beaucoup de vert, un peu d'orange, du rouge avec parcimonie.")
-        intens = analysis.session_intensity(activities)
+        st.caption(f"Chaque semaine : séances faciles (vert), moyennes (orange) et dures (rouge), "
+                   f"d'après ta FC rapportée à **ta FCmax ({HR_MAX} bpm** — réglable dans l'onglet "
+                   f"Bonus). Une VMA est reconnue « dure » même si sa FC moyenne est diluée par les "
+                   f"récupérations, grâce aux pics. Un bon équilibre = beaucoup de vert, du rouge "
+                   f"avec parcimonie.")
+        intens = analysis.session_intensity(activities, hr_max=HR_MAX)
         intens_recent = intens[intens["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)].copy()
         if not intens_recent.empty:
             intens_recent["week_start"] = (intens_recent["date"] - pd.to_timedelta(
@@ -938,12 +947,26 @@ with tab_bonus:
     if activities.empty:
         st.info("Synchronise d'abord tes séances pour débloquer ces indicateurs.")
     else:
+        # --- 0. FC max de référence (détectée, corrigeable) ---
+        st.markdown("**❤️ Ta FC max de référence**")
+        st.caption(f"Détectée automatiquement : **{HR_MAX_DETECTED} bpm** (ton plus haut pic des "
+                   "6 derniers mois). C'est elle qui calibre le classement facile/moyen/dur de "
+                   "toutes tes séances — corrige-la si tu connais ta vraie FCmax.")
+        hr_input = st.number_input("FC max (bpm)", min_value=150, max_value=220,
+                                   value=HR_MAX, step=1, key="hr_max_input")
+        if hr_input != HR_MAX:
+            storage.save_manual_note("hr_max", float(hr_input), db_path=USER_DB_PATH)
+            st.rerun()
+        st.divider()
+
         # --- 1. Équilibre 80/20 ---
         st.subheader("⚖️ L'équilibre 80/20")
         st.caption("La règle d'or de l'entraînement d'endurance : **~80 % du temps en allure facile**, "
                    "~20 % en intensité. L'erreur classique : courir trop souvent « moyennement dur », "
-                   "ce qui fatigue sans faire progresser. Calculé sur tes 4 dernières semaines.")
-        pol = analysis.polarization(activities)
+                   "ce qui fatigue sans faire progresser. Calculé sur tes 4 dernières semaines, avec "
+                   "ta FCmax personnalisée : tes VMA comptent bien comme du dur (pics de FC), tes "
+                   "footings comme du facile.")
+        pol = analysis.polarization(activities, hr_max=HR_MAX)
         if not pol:
             st.caption("Pas encore assez de séances avec FC sur les 4 dernières semaines.")
         else:
@@ -970,29 +993,6 @@ with tab_bonus:
                            "footings sont vraiment faciles (conversation possible).")
             else:
                 st.success(f"🟢 {pol['intense']:.0f} % d'intensité : équilibre idéal, continue.")
-
-        # --- 2. Courbe de forme ---
-        st.subheader("📈 Ta courbe de forme")
-        st.caption("Ton **10K théorique** recalculé toutes les 2 semaines à partir de ta meilleure "
-                   "performance récente. La courbe descend = tu progresses réellement. C'est LA vue "
-                   "long terme de ta saison.")
-        fit = analysis.fitness_curve(activities)
-        if fit.empty or len(fit) < 2:
-            st.caption("Pas encore assez d'historique pour tracer la courbe (il faut des séances ≥ 5 km).")
-        else:
-            delta_min = fit["t10_min"].iloc[-1] - fit["t10_min"].iloc[0]
-            sign = "gagné" if delta_min < 0 else "perdu"
-            t10_now = fit["t10_min"].iloc[-1]
-            st.metric("10K théorique actuel",
-                      f"{int(t10_now)} min {int(t10_now % 1 * 60):02d} s",
-                      delta=f"{abs(delta_min):.1f} min {sign} sur la période",
-                      delta_color="inverse" if delta_min < 0 else "normal")
-            fig_fit = px.line(fit, x="date", y="t10_min", markers=True, line_shape="spline")
-            fig_fit.update_traces(line=dict(width=3, color="#B08D57"))
-            fig_fit.update_layout(yaxis_title="10K théorique (min)", yaxis_autorange="reversed",
-                                  xaxis_title="")
-            st.plotly_chart(mobile_friendly(fig_fit), width='stretch', config=PLOTLY_CONFIG)
-            st.caption("Axe inversé : plus la courbe monte à l'écran, plus tu es rapide.")
 
         # --- 3. Dérive cardiaque ---
         st.subheader("💓 Dérive cardiaque (sorties longues)")

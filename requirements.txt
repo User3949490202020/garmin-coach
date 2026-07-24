@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Onglet Bonus (5 indicateurs avancés) + habillage premium.
+# FCmax personnalisée + classification VMA affinée ; retrait courbe de forme.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
