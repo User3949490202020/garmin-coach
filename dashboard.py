@@ -71,8 +71,9 @@ ENV_EMAIL = os.getenv("GARMIN_EMAIL")
 ENV_PASSWORD = os.getenv("GARMIN_PASSWORD")
 LOCAL_MODE = bool(ENV_EMAIL and ENV_PASSWORD)
 
-st.title("🏃 Ton coach running personnel")
-st.caption("Connecté à Garmin — analyse de tes séances, sommeil, FC et charge d'entraînement.")
+st.title("🏃 Ton Coach Running")
+st.caption("**L'entraînement au cordeau.** Tes séances, ton sommeil, ta charge — analysés "
+           "finement, conseillés sur mesure. Directement depuis ta montre.")
 
 with st.sidebar:
     if LOCAL_MODE:
@@ -377,9 +378,9 @@ if not activities.empty:
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge = st.tabs(
-    ["💬 Coach IA", "🔥 Stats Strava", "🏃 Séances", "😴 Récupération",
-     "📈 Charge d'entraînement"]
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_bonus = st.tabs(
+    ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
+     "📈 Charge & Risque", "✨ Bonus"]
 )
 
 # ----------------------------------------------------------------------
@@ -925,3 +926,137 @@ with tab_charge:
         }
         st.info(zone_explanations.get(zone, ""))
 
+
+# ----------------------------------------------------------------------
+# Bonus — indicateurs avancés de progression
+# ----------------------------------------------------------------------
+with tab_bonus:
+    st.subheader("✨ Le labo de ta progression")
+    st.caption("Cinq lectures d'expert, calculées sur tes données réelles. À consulter une fois "
+               "par semaine : c'est ici qu'on voit si l'entraînement **paie** — et s'il est bien construit.")
+
+    if activities.empty:
+        st.info("Synchronise d'abord tes séances pour débloquer ces indicateurs.")
+    else:
+        # --- 1. Équilibre 80/20 ---
+        st.subheader("⚖️ L'équilibre 80/20")
+        st.caption("La règle d'or de l'entraînement d'endurance : **~80 % du temps en allure facile**, "
+                   "~20 % en intensité. L'erreur classique : courir trop souvent « moyennement dur », "
+                   "ce qui fatigue sans faire progresser. Calculé sur tes 4 dernières semaines.")
+        pol = analysis.polarization(activities)
+        if not pol:
+            st.caption("Pas encore assez de séances avec FC sur les 4 dernières semaines.")
+        else:
+            pcols = st.columns(3)
+            pcols[0].metric("🟢 Facile", f"{pol['facile']:.0f} %")
+            pcols[1].metric("🟠🔴 Intensité", f"{pol['intense']:.0f} %")
+            pcols[2].metric("Séances analysées", pol["nb_seances"])
+            fig_pol = go.Figure()
+            for label, val, color in [("Facile", pol["facile"], "seagreen"),
+                                      ("Moyen", pol["moyen"], "orange"),
+                                      ("Dur", pol["dur"], "crimson")]:
+                fig_pol.add_trace(go.Bar(y=["Répartition"], x=[val], name=label,
+                                          orientation="h", marker_color=color))
+            fig_pol.add_vline(x=80, line_dash="dash", line_color="#22303F",
+                              annotation_text="cible 80 %")
+            fig_pol.update_layout(barmode="stack", height=140, xaxis=dict(range=[0, 100], title="%"),
+                                  margin=dict(t=10, b=10))
+            st.plotly_chart(mobile_friendly(fig_pol), width='stretch', config=PLOTLY_CONFIG)
+            if pol["intense"] > 35:
+                st.error(f"🔴 {pol['intense']:.0f} % d'intensité : beaucoup trop. Reprends du footing "
+                         "facile — c'est lui qui construit le moteur.")
+            elif pol["intense"] > 25:
+                st.warning(f"🟠 {pol['intense']:.0f} % d'intensité : un peu élevé. Vérifie que tes "
+                           "footings sont vraiment faciles (conversation possible).")
+            else:
+                st.success(f"🟢 {pol['intense']:.0f} % d'intensité : équilibre idéal, continue.")
+
+        # --- 2. Courbe de forme ---
+        st.subheader("📈 Ta courbe de forme")
+        st.caption("Ton **10K théorique** recalculé toutes les 2 semaines à partir de ta meilleure "
+                   "performance récente. La courbe descend = tu progresses réellement. C'est LA vue "
+                   "long terme de ta saison.")
+        fit = analysis.fitness_curve(activities)
+        if fit.empty or len(fit) < 2:
+            st.caption("Pas encore assez d'historique pour tracer la courbe (il faut des séances ≥ 5 km).")
+        else:
+            delta_min = fit["t10_min"].iloc[-1] - fit["t10_min"].iloc[0]
+            sign = "gagné" if delta_min < 0 else "perdu"
+            t10_now = fit["t10_min"].iloc[-1]
+            st.metric("10K théorique actuel",
+                      f"{int(t10_now)} min {int(t10_now % 1 * 60):02d} s",
+                      delta=f"{abs(delta_min):.1f} min {sign} sur la période",
+                      delta_color="inverse" if delta_min < 0 else "normal")
+            fig_fit = px.line(fit, x="date", y="t10_min", markers=True, line_shape="spline")
+            fig_fit.update_traces(line=dict(width=3, color="#B08D57"))
+            fig_fit.update_layout(yaxis_title="10K théorique (min)", yaxis_autorange="reversed",
+                                  xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_fit), width='stretch', config=PLOTLY_CONFIG)
+            st.caption("Axe inversé : plus la courbe monte à l'écran, plus tu es rapide.")
+
+        # --- 3. Dérive cardiaque ---
+        st.subheader("💓 Dérive cardiaque (sorties longues)")
+        st.caption("Sur une sortie longue à allure stable, si ta FC grimpe entre la 1ʳᵉ et la 2ᵉ "
+                   "moitié, c'est le signe que l'effort te coûte : **< 5 % = excellente endurance de "
+                   "base**, au-delà = fatigue, chaleur ou déshydratation. Seules les sorties ≥ 8 km "
+                   "à allure régulière sont analysées.")
+        drift = analysis.cardiac_drift(activities, laps)
+        if drift.empty:
+            st.caption("Aucune sortie longue analysable pour l'instant (il faut ≥ 8 km, une allure "
+                       "stable et le détail des tours synchronisé).")
+        else:
+            fig_dr = go.Figure()
+            drift_colors = ["seagreen" if d < 5 else ("orange" if d < 8 else "crimson")
+                            for d in drift["drift_pct"]]
+            fig_dr.add_trace(go.Bar(x=drift["date"], y=drift["drift_pct"], marker_color=drift_colors,
+                                     hovertemplate="%{x|%d/%m}<br>Dérive : %{y:.1f} %<extra></extra>"))
+            fig_dr.add_hline(y=5, line_dash="dash", line_color="gray",
+                             annotation_text="seuil 5 %")
+            fig_dr.update_layout(yaxis_title="Dérive FC (%)", xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_dr), width='stretch', config=PLOTLY_CONFIG)
+            if len(drift) >= 3 and (drift["drift_pct"].tail(3) < 5).mean() >= 0.67:
+                st.success("🟢 Tes dernières sorties longues montrent une FC stable : ton endurance "
+                           "fondamentale est solide.")
+
+        # --- 4. Monotonie de charge ---
+        st.subheader("🎢 Monotonie de charge (Foster)")
+        st.caption("Un entraînement efficace **alterne** jours durs et jours faciles. Cet indice "
+                   "mesure l'uniformité de ta charge sur 7 jours : **au-dessus de 2, c'est trop "
+                   "monotone** — un facteur de risque de blessure indépendant du volume, même si "
+                   "ton ACWR est bon.")
+        mono = analysis.monotony(activities, cross_training)
+        if mono.empty:
+            st.caption("Pas encore assez d'historique quotidien.")
+        else:
+            mono_recent = mono.tail(90)
+            fig_mono = px.line(mono_recent, y="monotonie")
+            fig_mono.update_traces(line=dict(width=3, color="#22303F"))
+            fig_mono.add_hrect(y0=0, y1=2, fillcolor="green", opacity=0.08, line_width=0)
+            fig_mono.add_hline(y=2, line_dash="dash", line_color="crimson",
+                               annotation_text="seuil de vigilance")
+            fig_mono.update_layout(yaxis_title="Monotonie (7 j)", xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_mono), width='stretch', config=PLOTLY_CONFIG)
+            m_now = mono["monotonie"].iloc[-1]
+            if m_now > 2:
+                st.warning(f"🟠 Monotonie actuelle : {m_now:.1f}. Casse la routine : un vrai jour "
+                           "dur, un vrai jour off.")
+            else:
+                st.success(f"🟢 Monotonie actuelle : {m_now:.1f} — bonne alternance dur/facile.")
+
+        # --- 5. Cadence ---
+        st.subheader("👣 Ta cadence dans le temps")
+        st.caption("La cadence (pas/minute) est un marqueur de technique : une dérive vers le bas "
+                   "accompagne souvent la fatigue ou une foulée qui se dégrade. On ne vise pas "
+                   "180 à tout prix — on surveille **ta** tendance.")
+        cad = analysis.cadence_trend(activities)
+        if cad.empty:
+            st.caption("Pas de données de cadence sur la période.")
+        else:
+            fig_cad = go.Figure()
+            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["avg_cadence"], mode="markers",
+                                          name="Séances", marker=dict(color="lightgray", size=7)))
+            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["cadence_lissee"], mode="lines",
+                                          name="Tendance (10 séances)",
+                                          line=dict(color="#B08D57", width=3)))
+            fig_cad.update_layout(yaxis_title="Cadence (pas/min)", xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_cad), width='stretch', config=PLOTLY_CONFIG)

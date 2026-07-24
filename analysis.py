@@ -612,3 +612,138 @@ def weather_adjusted_pace(activities_df: pd.DataFrame, reference_temp: float = 1
     penalty = (df["temp_c"] - reference_temp).clip(lower=0) * pct_per_degree
     df["allure_ajustee_s_per_km"] = df["avg_pace_s_per_km"] / (1 + penalty)
     return df
+
+
+# ======================================================================
+# Indicateurs "Bonus" — lecture avancée de la progression
+# ======================================================================
+
+def polarization(activities_df: pd.DataFrame, hr_max=190, days=28) -> dict:
+    """
+    Répartition 80/20 sur les `days` derniers jours, pondérée par le TEMPS
+    passé (référence en sciences du sport) : % facile vs % intense
+    (moyen + dur). La règle d'or : ~80 % du temps en facile. L'erreur
+    classique de l'amateur est le "toujours moyennement dur".
+    Les échauffements sont fusionnés avec leur séance (déjà exclus par
+    session_intensity).
+    """
+    df = session_intensity(activities_df, hr_max=hr_max)
+    if df.empty:
+        return {}
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+    df = df[(df["date"] >= cutoff) & df["duration_s"].notna()]
+    df = df[df["intensite"] != "Non classée"]
+    total = df["duration_s"].sum()
+    if not total or len(df) < 3:
+        return {}
+    pct = df.groupby("intensite")["duration_s"].sum() / total * 100
+    return {
+        "facile": float(pct.get("Facile", 0)),
+        "moyen": float(pct.get("Moyen", 0)),
+        "dur": float(pct.get("Dur", 0)),
+        "intense": float(pct.get("Moyen", 0) + pct.get("Dur", 0)),
+        "nb_seances": int(len(df)),
+    }
+
+
+def cardiac_drift(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
+                  min_km=8, months=6) -> pd.DataFrame:
+    """
+    Dérive cardiaque sur les sorties longues à allure stable : FC de la
+    2e moitié vs 1re moitié (en %), uniquement quand l'allure des deux
+    moitiés est comparable (écart < 5 %), sinon la comparaison n'a pas de
+    sens. Dérive < 5 % = bonne endurance de base ; au-delà = fatigue,
+    chaleur ou déshydratation.
+    """
+    if activities_df.empty or laps_df is None or laps_df.empty:
+        return pd.DataFrame()
+    df = activities_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
+    df = df[(df["date"] >= cutoff) & (df["distance_km"] >= min_km)]
+    if "is_warmup" in df.columns:
+        df = df[~df["is_warmup"]]
+
+    rows = []
+    for _, a in df.iterrows():
+        lp = laps_df[laps_df["activity_id"] == a["activity_id"]].sort_values("lap_index")
+        lp = lp.dropna(subset=["avg_hr", "avg_pace_s_per_km"])
+        # On ignore le dernier tour s'il est partiel (< 500 m)
+        if not lp.empty and (lp.iloc[-1]["distance_km"] or 0) < 0.5:
+            lp = lp.iloc[:-1]
+        if len(lp) < 6:
+            continue
+        half = len(lp) // 2
+        h1, h2 = lp.iloc[:half], lp.iloc[half:]
+        pace1, pace2 = h1["avg_pace_s_per_km"].mean(), h2["avg_pace_s_per_km"].mean()
+        if not pace1 or abs(pace2 - pace1) / pace1 > 0.05:
+            continue  # allure trop variable : séance non comparable
+        hr1, hr2 = h1["avg_hr"].mean(), h2["avg_hr"].mean()
+        if not hr1:
+            continue
+        rows.append({
+            "date": a["date"], "name": a["name"], "distance_km": a["distance_km"],
+            "drift_pct": (hr2 / hr1 - 1) * 100,
+        })
+    return pd.DataFrame(rows).sort_values("date") if rows else pd.DataFrame()
+
+
+def fitness_curve(activities_df: pd.DataFrame, months=6, window_weeks=8) -> pd.DataFrame:
+    """
+    Courbe de forme : le temps 10K théorique (Riegel, sur la meilleure perf
+    des `window_weeks` semaines précédentes), recalculé toutes les 2 semaines
+    sur les `months` derniers mois. Une courbe qui DESCEND = tu progresses.
+    """
+    df = activities_df.copy()
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.dropna(subset=["avg_pace_s_per_km", "distance_km"])
+    df = df[df["distance_km"] >= 5]
+    if df.empty:
+        return pd.DataFrame()
+
+    points = []
+    end = pd.Timestamp.now().normalize()
+    start = end - pd.DateOffset(months=months)
+    for ts in pd.date_range(start, end, freq="14D"):
+        window = df[(df["date"] <= ts) & (df["date"] > ts - pd.Timedelta(weeks=window_weeks))]
+        if window.empty:
+            continue
+        best = window.loc[window["avg_pace_s_per_km"].idxmin()]
+        t10 = (best["avg_pace_s_per_km"] * best["distance_km"]) * (10 / best["distance_km"]) ** 1.06
+        points.append({"date": ts, "t10_min": t10 / 60})
+    return pd.DataFrame(points)
+
+
+def monotony(activities_df: pd.DataFrame, cross_df: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    Monotonie de charge (Foster) : moyenne / écart-type de la charge
+    quotidienne sur 7 jours glissants. Au-dessus de 2, l'entraînement est
+    trop uniforme (même dose tous les jours) — un facteur de risque de
+    blessure indépendant du volume : il faut de l'alternance dur/facile.
+    """
+    daily = daily_training_load(activities_df, cross_df)
+    if daily.empty:
+        return pd.DataFrame()
+    full = pd.date_range(daily.index.min(), pd.Timestamp.now().normalize(), freq="D")
+    daily = daily.reindex(full, fill_value=0)
+    mean7 = daily.rolling(7, min_periods=7).mean()
+    std7 = daily.rolling(7, min_periods=7).std().replace(0, np.nan)
+    return pd.DataFrame({"monotonie": (mean7 / std7)}).dropna()
+
+
+def cadence_trend(activities_df: pd.DataFrame, months=6) -> pd.DataFrame:
+    """Cadence moyenne par séance + moyenne glissante sur 10 séances."""
+    df = activities_df.copy()
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"])
+    cutoff = pd.Timestamp.now() - pd.DateOffset(months=months)
+    df = df[(df["date"] >= cutoff)].dropna(subset=["avg_cadence"]).sort_values("date")
+    if "is_warmup" in df.columns:
+        df = df[~df["is_warmup"]]
+    if df.empty:
+        return df
+    df["cadence_lissee"] = df["avg_cadence"].rolling(10, min_periods=3).mean()
+    return df
