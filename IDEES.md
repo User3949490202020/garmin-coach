@@ -28,6 +28,15 @@ _(rien pour l'instant)_
 - **Muscu/renfo dans la charge d'entraînement** — les séances de musculation
   comptent dans l'ACWR et la fatigue. Livré le 09/07/2026.
 
+## 📦 Mis de côté (récupérables via l'historique git)
+
+- **Onglet Planificateur** — retiré le 23/07/2026 à la demande de Vincent
+  (« pas au niveau »). Code complet dans l'historique git (commit `afba74d`)
+  et `planner.py` toujours dans le dépôt. À retravailler avant de le remettre.
+- **Onglet Recommandations** — retiré le 23/07/2026. Même chose : code dans
+  l'historique git, à améliorer avant un éventuel retour. (Contenait aussi
+  l'ajout de course objectif — à réintégrer ailleurs si besoin.)
+
 ## 🐛 Bugs connus / suivis
 
 _(rien pour l'instant)_

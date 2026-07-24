@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Nouvel onglet Planificateur (programme 3 mois).
+# Reconnexion auto + mémoire de conversation + siestes + renfo/étirements.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

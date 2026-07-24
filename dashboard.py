@@ -19,7 +19,6 @@ import analysis
 import coach_agent
 import gpx_utils
 import sync as sync_module
-import planner
 from providers.garmin import GarminProvider
 from providers import strava
 
@@ -88,6 +87,30 @@ with st.sidebar:
         # (Garmin directement, ou Strava pour Suunto et les autres marques).
         st.header("Connexion")
 
+        # --- Reconnexion automatique via le jeton de session dans l'URL ---
+        # Streamlit perd la mémoire de session à chaque coupure (onglet
+        # inactif, téléphone verrouillé...). Le jeton aléatoire "s" dans l'URL
+        # permet de retrouver QUI était connecté sans redemander les
+        # identifiants. Le mot de passe n'est jamais stocké : la session
+        # Garmin en cache (token_store) suffit pour resynchroniser.
+        if ("garmin_email" not in st.session_state
+                and "strava_tokens" not in st.session_state
+                and "code" not in st.query_params):
+            _sess = storage.read_session_token(st.query_params.get("s"))
+            if _sess:
+                _src, _ident = _sess
+                if _src == "garmin":
+                    st.session_state.garmin_email = _ident
+                    st.session_state.garmin_password = None  # session Garmin en cache
+                    st.session_state.active_source = "garmin"
+                else:
+                    _db = storage.get_db_path_for_user(f"strava-{_ident}")
+                    storage.init_db(db_path=_db)
+                    _tok = storage.read_strava_tokens(db_path=_db)
+                    if _tok:
+                        st.session_state.strava_tokens = _tok
+                        st.session_state.active_source = "strava"
+
         # --- Retour de l'autorisation Strava (Strava renvoie sur ?code=...) ---
         if (STRAVA_CONFIGURED and "code" in st.query_params
                 and "strava_tokens" not in st.session_state):
@@ -101,6 +124,10 @@ with st.sidebar:
                     st.session_state.strava_tokens = _tok
                     st.session_state.active_source = "strava"
                     st.session_state.pop("strava_error", None)
+                    # Jeton de reconnexion automatique (la synchro auto à
+                    # l'ouverture prend le relais après le rerun)
+                    st.session_state.reconnect_token = storage.create_session_token(
+                        "strava", _tok["athlete_id"])
                 except Exception as e:
                     # On mémorise l'erreur pour l'afficher après le rerun, et on
                     # purge le `code` de l'URL : un code d'autorisation n'est
@@ -108,6 +135,8 @@ with st.sidebar:
                     st.session_state.strava_error = str(e)
             # Toujours nettoyer l'URL puis relancer (succès comme échec).
             st.query_params.clear()
+            if st.session_state.get("reconnect_token"):
+                st.query_params["s"] = st.session_state.reconnect_token
             st.rerun()
 
         # Erreur de connexion Strava mémorisée lors d'un précédent essai.
@@ -119,10 +148,15 @@ with st.sidebar:
 
         # --- Aucune source connectée : proposer le choix Garmin / Strava ---
         if not connected_garmin and not connected_strava:
+            if st.session_state.pop("session_expired_msg", False):
+                st.warning("Ta session Garmin a expiré — ressaisis ton mot de passe pour te "
+                           "reconnecter. Tes données, ton objectif et ton historique de "
+                           "conversation sont conservés.")
             src_g, src_s = st.tabs(["⌚ Garmin", "🔶 Strava (Suunto & autres)"])
             with src_g:
-                st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ils restent en "
-                           "mémoire le temps de ta session uniquement, jamais écrits sur le serveur.")
+                st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ton mot de passe "
+                           "n'est jamais enregistré sur le serveur ; ton email est associé à un "
+                           "identifiant de session aléatoire pour te reconnecter automatiquement.")
                 with st.form("garmin_login"):
                     email_input = st.text_input("Email Garmin Connect")
                     password_input = st.text_input("Mot de passe Garmin Connect", type="password")
@@ -132,6 +166,11 @@ with st.sidebar:
                         st.session_state.garmin_email = email_input
                         st.session_state.garmin_password = password_input
                         st.session_state.active_source = "garmin"
+                        # Jeton de reconnexion (email seul, jamais le mot de
+                        # passe) ; la synchro auto se déclenche après le rerun.
+                        tok = storage.create_session_token("garmin", email_input)
+                        st.session_state.reconnect_token = tok
+                        st.query_params["s"] = tok
                         st.rerun()
                     else:
                         st.error("Renseigne ton email et ton mot de passe Garmin.")
@@ -168,9 +207,14 @@ with st.sidebar:
             st.success(f"Connecté : {garmin_email}")
 
         if st.button("Se déconnecter"):
+            # Invalide aussi le jeton de reconnexion automatique
+            tok = st.session_state.get("reconnect_token") or st.query_params.get("s")
+            if tok:
+                storage.delete_session_token(tok)
             for key in ["garmin_email", "garmin_password", "own_gemini_key",
                        "chat_session", "gemini_client", "chat_display_history",
-                       "garmin_client", "mfa_pending", "strava_tokens", "active_source"]:
+                       "garmin_client", "mfa_pending", "strava_tokens", "active_source",
+                       "reconnect_token", "auto_sync_done"]:
                 st.session_state.pop(key, None)
             st.query_params.clear()
             st.rerun()
@@ -289,6 +333,14 @@ with st.sidebar:
                                                      db_path=USER_DB_PATH)
                             st.success("Données à jour !")
                 except Exception as e:
+                    if garmin_password is None and active_source == "garmin" and (
+                            "password" in str(e).lower() or "authent" in str(e).lower()):
+                        # Session restaurée mais cache Garmin expiré : on
+                        # redemande le mot de passe (jamais stocké, par choix).
+                        # Données, objectif et conversations sont conservés.
+                        st.session_state.pop("garmin_email", None)
+                        st.session_state.session_expired_msg = True
+                        st.rerun()
                     st.warning(f"Synchro automatique impossible pour l'instant — tu peux "
                                f"réessayer avec le bouton. ({e})")
             if st.session_state.get("mfa_pending"):
@@ -319,9 +371,9 @@ if not activities.empty:
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_planif, tab_conseils = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge = st.tabs(
     ["💬 Coach IA", "🔥 Stats Strava", "🏃 Séances", "😴 Récupération",
-     "📈 Charge d'entraînement", "🗓️ Planificateur", "💡 Recommandations"]
+     "📈 Charge d'entraînement"]
 )
 
 # ----------------------------------------------------------------------
@@ -360,14 +412,17 @@ with tab_coach:
                    "(c'est gratuit, aucune carte bancaire requise).")
     else:
         if "chat_display_history" not in st.session_state:
-            st.session_state.chat_display_history = []
+            # Reprend la conversation des 12 dernières heures (persistée en
+            # base par utilisateur) : une coupure de session ne l'efface plus.
+            st.session_state.chat_display_history = storage.read_chat_history(
+                hours=12, db_path=USER_DB_PATH)
 
         weekly_ctx = analysis.weekly_stats(activities) if not activities.empty else pd.DataFrame()
         records_ctx = analysis.personal_records(activities) if not activities.empty else {}
 
         recovery_latest_ctx = None
         if not wellness.empty:
-            rec_df = analysis.recovery_score(wellness)
+            rec_df = analysis.recovery_score(wellness, sleep)
             if not rec_df.empty and rec_df["recovery_score"].notna().any():
                 recovery_latest_ctx = rec_df["recovery_score"].dropna().iloc[-1]
 
@@ -397,6 +452,16 @@ with tab_coach:
         )
 
         if "chat_session" not in st.session_state:
+            # Si une conversation récente existe (reprise après coupure), on la
+            # réinjecte dans le contexte : le coach « se souvient » des échanges
+            # des 12 dernières heures.
+            if st.session_state.chat_display_history:
+                recent = st.session_state.chat_display_history[-12:]
+                convo = "\n".join(
+                    f"- {'Athlète' if m['role'] == 'user' else 'Coach'} : {m['content'][:500]}"
+                    for m in recent)
+                context_summary += ("\n\n### Reprise de conversation (échanges des 12 dernières heures)\n"
+                                    "Continue naturellement cette conversation déjà entamée :\n" + convo)
             try:
                 gemini_client, chat_session = coach_agent.create_chat_session(
                     context_summary, api_key=own_gemini_key
@@ -417,6 +482,7 @@ with tab_coach:
         question = st.chat_input("Pose ta question au coach...")
         if question and st.session_state.chat_session is not None:
             st.session_state.chat_display_history.append({"role": "user", "content": question})
+            storage.append_chat_message("user", question, db_path=USER_DB_PATH)
             with st.chat_message("user"):
                 st.markdown(question)
             with st.chat_message("assistant"):
@@ -435,9 +501,11 @@ with tab_coach:
                                      f"Vérifie que ta clé `GEMINI_API_KEY` dans `.env` est valide.")
                 st.markdown(answer)
             st.session_state.chat_display_history.append({"role": "assistant", "content": answer})
+            storage.append_chat_message("assistant", answer, db_path=USER_DB_PATH)
 
         if st.session_state.chat_display_history and st.button("🗑️ Effacer la conversation"):
             st.session_state.chat_display_history = []
+            storage.clear_chat_history(db_path=USER_DB_PATH)
             del st.session_state.chat_session
             if "gemini_client" in st.session_state:
                 del st.session_state.gemini_client
@@ -546,6 +614,33 @@ with tab_strava:
             for col, key in zip(pcols, ["10K", "Semi", "Marathon"]):
                 col.metric(key, preds[key]["temps_str"])
 
+        st.subheader("💪 Renfo & étirements par semaine")
+        st.caption("Objectif : **2 séances de musculation** et **2 séances d'étirements** (yoga sur "
+                   "ta montre) par semaine — la ligne pointillée marque l'objectif. Données tirées "
+                   "directement de ta montre Garmin.")
+        if cross_training.empty:
+            st.caption("Aucune séance de renfo/étirements synchronisée pour l'instant — resynchronise "
+                       "pour récupérer aussi tes séances de yoga.")
+        else:
+            ct = cross_training.copy()
+            ct["date"] = pd.to_datetime(ct["date"])
+            ct = ct[ct["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)]
+            if not ct.empty:
+                ct["categorie"] = ct["sport"].astype(str).str.contains("yoga", case=False).map(
+                    {True: "Étirements", False: "Musculation"})
+                ct["week_start"] = (ct["date"] - pd.to_timedelta(ct["date"].dt.weekday, unit="D")).dt.normalize()
+                ct_counts = ct.groupby(["week_start", "categorie"]).size().reset_index(name="nb")
+                fig_ct = px.bar(
+                    ct_counts, x="week_start", y="nb", color="categorie", barmode="group",
+                    color_discrete_map={"Musculation": "mediumpurple", "Étirements": "lightseagreen"},
+                    category_orders={"categorie": ["Musculation", "Étirements"]},
+                )
+                fig_ct.add_hline(y=2, line_dash="dash", line_color="gray",
+                                 annotation_text="Objectif : 2/sem")
+                fig_ct.update_layout(yaxis_title="Nb de séances", xaxis_title="", legend_title_text="",
+                                     yaxis=dict(dtick=1))
+                st.plotly_chart(mobile_friendly(fig_ct), width='stretch', config=PLOTLY_CONFIG)
+
 # ----------------------------------------------------------------------
 # Séances
 # ----------------------------------------------------------------------
@@ -553,15 +648,6 @@ with tab_seances:
     if activities.empty:
         st.info("Pas encore de séances synchronisées.")
     else:
-        eff = analysis.pace_efficiency(activities)
-        st.subheader("Tendance d'efficacité allure / FC")
-        st.caption("Courbe lissée : plus elle descend, plus tu vas vite pour le même effort cardiaque, "
-                   "c'est un vrai signe de progrès.")
-        if not eff.empty:
-            fig = px.line(eff, x="date", y="efficacite", line_shape="spline", markers=True)
-            fig.update_traces(line=dict(width=3, color="royalblue"))
-            st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
-
         st.subheader("Historique des séances")
         display_df = activities.sort_values("date", ascending=False).copy()
         display_df["allure_min_km"] = display_df["avg_pace_s_per_km"].apply(
@@ -670,10 +756,12 @@ with tab_recup:
         else:
             st.info("Pas encore de données de sommeil/récupération.")
     else:
-        rec = analysis.recovery_score(wellness) if not wellness.empty else pd.DataFrame()
+        rec = analysis.recovery_score(wellness, sleep) if not wellness.empty else pd.DataFrame()
         if not rec.empty:
             st.subheader("Score de récupération quotidien")
-            st.caption("Basé sur ta FC repos, ta HRV et ton Body Battery comparés à ta moyenne perso des 28 derniers jours.")
+            st.caption("Basé sur ta FC repos, ta HRV, ton Body Battery, ton stress et tes pas comparés "
+                       "à ta moyenne perso des 28 derniers jours. Tes siestes comptent aussi : même "
+                       "10 minutes ajoutent un petit bonus au score du jour.")
             # 3 zones à couleur fixe (plutôt qu'un dégradé continu par barre,
             # beaucoup moins lisible d'un coup d'œil) : 50 = ta moyenne perso.
             def _recovery_zone(v):
@@ -828,243 +916,3 @@ with tab_charge:
         }
         st.info(zone_explanations.get(zone, ""))
 
-# ----------------------------------------------------------------------
-# Planificateur d'entraînement (programme ~3 mois recalculé en continu)
-# ----------------------------------------------------------------------
-with tab_planif:
-    st.subheader("🗓️ Ton programme d'entraînement")
-    st.caption("Construit à partir de TES données : volume de départ = ta moyenne réelle des "
-               "4 dernières semaines, allures cibles dérivées de ta forme actuelle, progression "
-               "prudente (+6 %/sem) avec une semaine allégée toutes les 4 semaines. Il se met à "
-               "jour tout seul après chaque synchronisation.")
-
-    # --- Critères (persistés : à régler une fois) ---
-    saved_nb = storage.read_manual_note("plan_nb_seances", db_path=USER_DB_PATH)
-    saved_day = storage.read_manual_note("plan_longrun_day", db_path=USER_DB_PATH)
-    pcol1, pcol2 = st.columns(2)
-    plan_nb = pcol1.slider("Combien de séances de course par semaine ?", 1, 7,
-                           int(saved_nb[0]) if saved_nb else 3, key="plan_nb")
-    plan_day = pcol2.selectbox("Jour de la sortie longue", list(range(7)),
-                               index=int(saved_day[0]) if saved_day else 6,
-                               format_func=lambda i: planner.FR_DAYS[i], key="plan_day")
-    if not saved_nb or int(saved_nb[0]) != plan_nb:
-        storage.save_manual_note("plan_nb_seances", float(plan_nb), db_path=USER_DB_PATH)
-    if not saved_day or int(saved_day[0]) != plan_day:
-        storage.save_manual_note("plan_longrun_day", float(plan_day), db_path=USER_DB_PATH)
-
-    # --- Course objectif : reprise automatique de la course active ---
-    plan_races = storage.read_df("races", db_path=USER_DB_PATH)
-    plan_race = None
-    if not plan_races.empty:
-        active_races = plan_races[plan_races["is_active"] == 1]
-        if not active_races.empty:
-            r = active_races.iloc[0]
-            plan_race = {"name": r["name"], "date": pd.to_datetime(r["date"]),
-                         "distance_km": r["distance_km"]}
-            st.success(f"🎯 Objectif pris en compte : **{r['name']}** le "
-                       f"{pd.to_datetime(r['date']).strftime('%d/%m/%Y')} ({r['distance_km']:.1f} km) "
-                       "— le plan intègre l'affûtage et la semaine de course.")
-    if plan_race is None:
-        st.caption("💡 Pas de course objectif : le plan vise une progression générale. Tu peux "
-                   "ajouter une course dans l'onglet **Recommandations** pour un plan orienté objectif.")
-
-    plan_preds = analysis.predict_race_times(activities, months=6) if not activities.empty else {}
-    plan = planner.build_plan(activities, plan_nb, plan_day, race=plan_race,
-                              predictions=plan_preds)
-
-    # --- Allures cibles ---
-    st.markdown("**Tes allures cibles** (dérivées de ta forme actuelle) :")
-    acol = st.columns(4)
-    for col, (label, key) in zip(acol, [("🟢 Facile", "facile"), ("🟠 Sortie longue", "longue"),
-                                        ("🔴 Seuil", "seuil"), ("🔴 VMA", "vma")]):
-        p = plan["paces"][key]
-        col.metric(label, f"{int(p // 60)}:{int(p % 60):02d}/km" if p else "sensations")
-
-    # --- Semaines en cours et à venir, détaillées jour par jour ---
-    def _week_detail(week, title, expanded=True):
-        with st.expander(title, expanded=expanded):
-            st.markdown(f"**Type : {week['type']}** — {week['km']:.0f} km sur "
-                        f"{week['nb_seances']} séance(s)")
-            rows = []
-            for s in week["sessions"]:
-                day_date = week["week_start"] + pd.Timedelta(days=s["jour"])
-                rows.append({
-                    "Jour": f"{planner.FR_DAYS[s['jour']]} {day_date.strftime('%d/%m')}",
-                    "Séance": f"{s['couleur']} {s['type']}",
-                    "Distance": f"{s['km']:.0f} km",
-                    "Allure": s["allure"],
-                    "Contenu": s["contenu"],
-                })
-            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
-
-    week_now, week_next = plan["weeks"][0], plan["weeks"][1]
-    # Ce qui est déjà couru cette semaine, pour situer où on en est
-    if not activities.empty:
-        done = activities[activities["date"] >= week_now["week_start"]]
-        if not done.empty:
-            st.caption(f"📍 Déjà couru cette semaine : **{len(done)} séance(s), "
-                       f"{done['distance_km'].sum():.1f} km** sur les {week_now['km']:.0f} km prévus.")
-    _week_detail(week_now, f"📅 Semaine en cours (du {week_now['week_start'].strftime('%d/%m')})")
-    _week_detail(week_next, f"⏭️ Semaine prochaine (du {week_next['week_start'].strftime('%d/%m')})")
-
-    # --- Vue d'ensemble des ~3 mois ---
-    st.markdown("**Vue d'ensemble du programme :**")
-    overview = pd.DataFrame([{
-        "Semaine du": w["week_start"].strftime("%d/%m"),
-        "Type": {"Progression": "📈 Progression", "Stabilité": "➡️ Stabilité",
-                 "Récupération": "😴 Récupération", "Affûtage": "🪶 Affûtage",
-                 "Course": "🏁 Course"}.get(w["type"], w["type"]),
-        "Volume": f"{w['km']:.0f} km",
-        "Séances": w["nb_seances"],
-        "Séance clé": next((s["type"] for s in w["sessions"]
-                            if "Qualité" in s["type"] or "COURSE" in s["type"]),
-                           "Sortie longue"),
-    } for w in plan["weeks"]])
-    st.dataframe(overview, width='stretch', hide_index=True)
-    st.caption("⚠️ Ce plan est indicatif : il ne remplace pas l'écoute de ton corps. En cas de "
-               "douleur ou de score de récupération dans le rouge plusieurs jours, allège — "
-               "et demande son avis au Coach IA, il connaît ton programme ET ta forme du moment.")
-
-# ----------------------------------------------------------------------
-# Recommandations (+ gestion de course et phase d'entraînement)
-# ----------------------------------------------------------------------
-with tab_conseils:
-    st.subheader("🏁 Course préparée")
-
-    with st.expander("➕ Ajouter une course"):
-        with st.form("add_race_form"):
-            rname = st.text_input("Nom de la course")
-            rdate = st.date_input("Date de la course", min_value=dt.date.today())
-            rdist = st.number_input("Distance (km)", min_value=1.0, value=10.0, step=0.1)
-            rgpx = st.file_uploader("Parcours GPX (optionnel, pour le profil de dénivelé)", type=["gpx"])
-            submitted = st.form_submit_button("Enregistrer cette course")
-            if submitted and rname:
-                elevation_gain, profile_json = None, None
-                if rgpx is not None:
-                    try:
-                        parsed = gpx_utils.parse_gpx(rgpx)
-                        elevation_gain = parsed["elevation_gain"]
-                        profile_json = json.dumps(parsed["profile"])
-                    except Exception as e:
-                        st.warning(f"Impossible de lire le fichier GPX : {e}")
-                storage.add_race({
-                    "name": rname,
-                    "date": rdate.isoformat(),
-                    "distance_km": rdist,
-                    "elevation_gain": elevation_gain,
-                    "elevation_profile_json": profile_json,
-                }, db_path=USER_DB_PATH)
-                st.success(f"Course « {rname} » ajoutée !")
-                st.rerun()
-
-    races_df = storage.read_df("races", db_path=USER_DB_PATH)
-    active_race = None
-    if not races_df.empty:
-        options = races_df["id"].tolist()
-        labels = {row["id"]: f"{row['name']} — {row['date']}" for _, row in races_df.iterrows()}
-        default_idx = 0
-        active_rows = races_df[races_df["is_active"] == 1]
-        if not active_rows.empty:
-            default_idx = options.index(active_rows.iloc[0]["id"])
-        selected = st.selectbox("Sélectionne ta course de préparation", options=options,
-                                format_func=lambda i: labels[i], index=default_idx)
-        if selected is not None:
-            storage.set_active_race(int(selected), db_path=USER_DB_PATH)
-            active_race = races_df[races_df["id"] == selected].iloc[0]
-    else:
-        st.caption("Aucune course enregistrée pour l'instant. Ajoute-en une ci-dessus pour un plan "
-                   "personnalisé par phase (VMA → Seuil → Affûtage).")
-
-    if active_race is not None:
-        race_date = pd.to_datetime(active_race["date"]).date()
-
-        focus_labels = {
-            "vma": "Fractionné / VMA",
-            "volume": "Volume / endurance de fond",
-            "mixte": "Préparation générale (mixte)",
-        }
-        focus_choice = st.selectbox(
-            "Ton focus pour la phase de fond (loin de la course)",
-            options=list(focus_labels.keys()),
-            format_func=lambda k: focus_labels[k],
-            index=0,
-            help="Chacun a ses propres objectifs : choisis ce qui correspond à TON plan, "
-                 "ce n'est pas figé pour tout le monde.",
-        )
-        phase = analysis.training_phase(race_date, focus_style=focus_choice)
-        days_left = (race_date - dt.date.today()).days
-
-        col1, col2 = st.columns([1, 2])
-        col1.metric(f"Jours avant {active_race['name']}", days_left)
-        with col2:
-            st.markdown(f"#### Phase actuelle : {phase['phase']}")
-            st.write(phase["description"])
-
-        if pd.notna(active_race.get("elevation_profile_json")) and active_race.get("elevation_profile_json"):
-            profile = json.loads(active_race["elevation_profile_json"])
-            if profile:
-                st.subheader("Profil du parcours")
-                prof_df = pd.DataFrame(profile)
-                fig_elev = px.area(prof_df, x="distance_km", y="elevation_m")
-                fig_elev.update_layout(yaxis_title="Altitude (m)", xaxis_title="Distance (km)")
-                st.plotly_chart(mobile_friendly(fig_elev), width='stretch', config=PLOTLY_CONFIG)
-                if pd.notna(active_race.get("elevation_gain")):
-                    st.metric("Dénivelé positif total (D+)", f"{active_race['elevation_gain']:.0f} m")
-
-    st.divider()
-    st.subheader("💡 Conseils du jour")
-    acwr_val = None
-    recovery_val = None
-    days_since_rest = None
-    resting_today = False
-    last_activity_date = None
-    last_wellness_date = None
-
-    if not activities.empty:
-        last_activity_date = activities["date"].max()
-        daily = analysis.daily_training_load(activities, cross_training)
-        full_range = pd.date_range(daily.index.min(), pd.Timestamp.now().normalize(), freq="D")
-        daily = daily.reindex(full_range, fill_value=0)
-        acwr_df = analysis.acwr(daily)
-        if acwr_df["acwr"].notna().any():
-            acwr_val = acwr_df["acwr"].dropna().iloc[-1]
-
-        today_normalized = pd.Timestamp.now().normalize()
-        resting_today = daily.get(today_normalized, 0) == 0
-
-        rest_days = (daily.tail(14) == 0)
-        days_since_rest = 0
-        for val in rest_days[::-1]:
-            if val:
-                break
-            days_since_rest += 1
-
-    if not wellness.empty:
-        last_wellness_date = wellness["date"].max()
-        rec = analysis.recovery_score(wellness)
-        if not rec.empty and rec["recovery_score"].notna().any():
-            recovery_val = rec["recovery_score"].dropna().iloc[-1]
-
-    freshness_bits = []
-    if last_activity_date is not None:
-        freshness_bits.append(f"dernière séance connue : {last_activity_date.strftime('%d/%m/%Y')}")
-    if last_wellness_date is not None:
-        freshness_bits.append(f"dernières données de récupération : {last_wellness_date.strftime('%d/%m/%Y')}")
-    if freshness_bits:
-        st.caption("📅 " + " · ".join(freshness_bits) +
-                   " — si ce n'est pas aujourd'hui, resynchronise avant de lire les conseils ci-dessous.")
-
-    manual_rest = st.checkbox(
-        "☑️ Je suis en repos aujourd'hui (coche si l'appli ne l'a pas encore détecté automatiquement)",
-        value=False,
-    )
-    if manual_rest:
-        resting_today = True
-        days_since_rest = 0
-
-    tips = analysis.generate_recommendations(acwr_val, recovery_val, days_since_rest, resting_today)
-    for tip in tips:
-        st.write("- " + tip)
-
-    if not tips:
-        st.info("Synchronise davantage de données pour obtenir des recommandations personnalisées.")

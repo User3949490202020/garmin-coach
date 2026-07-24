@@ -33,8 +33,10 @@ API_BASE = "https://www.strava.com/api/v3"
 # Types d'activités Strava considérés comme « course à pied ».
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 
-# Types Strava considérés comme renforcement / musculation (charge, hors course).
-STRENGTH_TYPES = {"WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining"}
+# Types Strava considérés comme renforcement / musculation ou étirements
+# (comptent dans la charge, hors course).
+STRENGTH_TYPES = {"WeightTraining", "Workout", "Crossfit",
+                  "HighIntensityIntervalTraining", "Yoga"}
 
 
 # ----------------------------------------------------------------------

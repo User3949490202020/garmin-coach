@@ -45,6 +45,12 @@ def training_load_cross(cross_df: pd.DataFrame, hr_max=190, hr_rest=55, default_
     df = cross_df.copy()
     if df.empty:
         return df
+    # Le yoga/étirements ne fatigue pas : il ne compte pas dans la charge
+    # (il est suivi à part, comme pratique de récupération).
+    if "sport" in df.columns:
+        df = df[~df["sport"].astype(str).str.contains("yoga", case=False, na=False)]
+        if df.empty:
+            return df
     df["date"] = pd.to_datetime(df["date"])
     hr = df["avg_hr"].fillna(default_hr)
     hrr = ((hr - hr_rest) / max(hr_max - hr_rest, 1)).clip(lower=0, upper=1.3)
@@ -116,16 +122,27 @@ def pace_efficiency(activities_df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values("date")
 
 
-def recovery_score(wellness_df: pd.DataFrame) -> pd.DataFrame:
+def recovery_score(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame = None) -> pd.DataFrame:
     """
     Score de récupération 0-100 basé sur z-scores de FC repos (inversé),
     HRV, et body battery matin, comparés à la moyenne perso des 28 derniers jours.
+    Les siestes (sleep_df.nap_s) ajoutent un petit bonus : même 10 minutes
+    aident à récupérer (+1.5 pt), plafonné à +5 pts.
     """
     df = wellness_df.copy()
     if df.empty:
         return df
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
+
+    # Bonus sieste du jour (fusionné par date depuis les données de sommeil)
+    nap_bonus = pd.Series(0.0, index=df.index)
+    if sleep_df is not None and not sleep_df.empty and "nap_s" in sleep_df.columns:
+        naps = sleep_df.copy()
+        naps["date"] = pd.to_datetime(naps["date"])
+        nap_map = naps.set_index("date")["nap_s"]
+        nap_min = df["date"].map(nap_map).fillna(0) / 60
+        nap_bonus = (nap_min * 0.15).clip(0, 5)  # 10 min → +1.5, 30 min → +4.5
 
     def zscore(col):
         if col not in df.columns:
@@ -151,8 +168,9 @@ def recovery_score(wellness_df: pd.DataFrame) -> pd.DataFrame:
     weighted_sum = (values.fillna(0) * weights).sum(axis=1)
     weight_total = (mask * weights).sum(axis=1).replace(0, np.nan)
     combined = weighted_sum / weight_total
-    # Transforme le z-score combiné en score 0-100 (50 = dans la moyenne perso)
-    df["recovery_score"] = (50 + combined * 15).clip(0, 100)
+    # Transforme le z-score combiné en score 0-100 (50 = dans la moyenne perso),
+    # puis ajoute le bonus sieste du jour.
+    df["recovery_score"] = (50 + combined * 15 + nap_bonus).clip(0, 100)
     return df
 
 

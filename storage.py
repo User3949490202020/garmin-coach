@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS text_notes (
     value TEXT,
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS chat_history (
+    ts TEXT,
+    role TEXT,
+    content TEXT
+);
 """
 
 MIGRATIONS = {
@@ -245,6 +251,88 @@ def read_text_note(key: str, db_path=None):
     finally:
         conn.close()
     return (row[0], row[1]) if row else None
+
+
+# ----------------------------------------------------------------------
+# Historique de conversation avec le coach IA (par utilisateur)
+# ----------------------------------------------------------------------
+def append_chat_message(role: str, content: str, db_path=None):
+    import datetime as _dt
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO chat_history (ts, role, content) VALUES (?, ?, ?)",
+                 (_dt.datetime.now().isoformat(), role, content))
+    # Garde la table légère : on ne conserve que les 200 derniers messages
+    conn.execute("""DELETE FROM chat_history WHERE rowid NOT IN
+                    (SELECT rowid FROM chat_history ORDER BY ts DESC LIMIT 200)""")
+    conn.commit()
+    conn.close()
+
+
+def read_chat_history(hours: int = 12, db_path=None) -> list[dict]:
+    """Messages des `hours` dernières heures, du plus ancien au plus récent."""
+    import datetime as _dt
+    cutoff = (_dt.datetime.now() - _dt.timedelta(hours=hours)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT role, content FROM chat_history WHERE ts >= ? ORDER BY ts ASC",
+            (cutoff,)).fetchall()
+    finally:
+        conn.close()
+    return [{"role": r[0], "content": r[1]} for r in rows]
+
+
+def clear_chat_history(db_path=None):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM chat_history")
+    conn.commit()
+    conn.close()
+
+
+# ----------------------------------------------------------------------
+# Sessions de reconnexion automatique (base PARTAGÉE, un jeton aléatoire
+# par personne connectée — le mot de passe n'y est JAMAIS stocké)
+# ----------------------------------------------------------------------
+def _sessions_conn():
+    data_dir = _BASE_DIR / "data"
+    data_dir.mkdir(exist_ok=True)
+    conn = sqlite3.connect(data_dir / "sessions.db")
+    conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY, source TEXT, ident TEXT, created_at TEXT)""")
+    return conn
+
+
+def create_session_token(source: str, ident: str) -> str:
+    """Crée un jeton de reconnexion (source: 'garmin'/'strava', ident: email/athlete_id)."""
+    import uuid
+    import datetime as _dt
+    token = uuid.uuid4().hex
+    conn = _sessions_conn()
+    conn.execute("INSERT INTO sessions (token, source, ident, created_at) VALUES (?, ?, ?, ?)",
+                 (token, source, ident, _dt.date.today().isoformat()))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def read_session_token(token: str):
+    """Retourne (source, ident) ou None si jeton inconnu."""
+    if not token:
+        return None
+    conn = _sessions_conn()
+    try:
+        row = conn.execute("SELECT source, ident FROM sessions WHERE token = ?",
+                           (token,)).fetchone()
+    finally:
+        conn.close()
+    return (row[0], row[1]) if row else None
+
+
+def delete_session_token(token: str):
+    conn = _sessions_conn()
+    conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
 
 
 def upsert_wellness(row: dict, db_path=None):

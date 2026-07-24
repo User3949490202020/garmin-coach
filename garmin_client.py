@@ -26,7 +26,11 @@ class GarminClient:
     def __init__(self, email: str = None, password: str = None):
         self.email = email or os.getenv("GARMIN_EMAIL")
         self.password = password or os.getenv("GARMIN_PASSWORD")
-        if not self.email or not self.password:
+        # Le mot de passe est optionnel : une session Garmin déjà en cache
+        # (token_store) suffit pour se reconnecter. Il ne redevient nécessaire
+        # que si cette session a expiré (la librairie lèvera alors une erreur
+        # d'authentification explicite, gérée par l'appelant).
+        if not self.email:
             raise RuntimeError(
                 "Identifiants Garmin manquants."
             )
@@ -149,11 +153,12 @@ class GarminClient:
 
     def get_cross_training_since(self, months=6, max_activities=400, page_size=50):
         """
-        Séances de renforcement / musculation des `months` derniers mois.
-        Garmin nomme ça `strength_training` (ou `functional_strength_training`).
+        Séances de renforcement / musculation ET de yoga/étirements des
+        `months` derniers mois. Garmin nomme ça `strength_training` (ou
+        `functional_strength_training`) et `yoga`.
         """
         return self._activities_since(
-            lambda a: "strength" in self._type_key(a),
+            lambda a: any(k in self._type_key(a) for k in ("strength", "yoga")),
             months=months, max_activities=max_activities, page_size=page_size,
         )
 
