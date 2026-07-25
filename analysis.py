@@ -891,5 +891,6 @@ def vma_sessions(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
             "meilleure_s": fast["avg_pace_s_per_km"].min(),
             "regularite_s": fast["avg_pace_s_per_km"].std(),
             "laps_paces": paces,
+            "temp_c": a.get("temp_c") if "temp_c" in a.index else None,
         })
     return pd.DataFrame(rows).sort_values("date", ascending=False) if rows else pd.DataFrame()

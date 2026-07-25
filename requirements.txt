@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Améliorations Maxime : zones Z1-Z5, onglet VMA, parc de chaussures.
+# Graphiques VMA : vitesse en haut, évolution par séance datée + température.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

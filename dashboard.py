@@ -1209,24 +1209,51 @@ with tab_vma:
             })
             st.dataframe(table, hide_index=True, width='stretch')
 
+            # --- Évolution séance par séance : plus haut = plus rapide ---
+            st.markdown("**Évolution de tes séances de VMA**")
+            st.caption("Une barre par séance (vitesse moyenne des fractions, en km/h — plus haut "
+                       "= plus rapide). La température du jour est affichée au-dessus de chaque "
+                       "barre : elle explique souvent une séance en retrait.")
+            vs_chron = vs.sort_values("date")
+            speed_kmh = 3600 / vs_chron["allure_moy_s"]
+            temp_labels = ["" if pd.isna(t) else f"{t:.0f}°C" for t in vs_chron["temp_c"]]
+            fig_ev = go.Figure()
+            fig_ev.add_trace(go.Bar(
+                x=vs_chron["date"].dt.strftime("%d/%m"), y=speed_kmh,
+                marker_color="#E06666",
+                text=temp_labels, textposition="outside",
+                customdata=[_p(p) + "/km" for p in vs_chron["allure_moy_s"]],
+                hovertemplate="%{x} : %{y:.1f} km/h (%{customdata})<extra></extra>",
+            ))
+            fig_ev.add_hline(y=speed_kmh.mean(), line_dash="dash", line_color="#22303F",
+                             annotation_text=f"moyenne {speed_kmh.mean():.1f} km/h")
+            ymin = max(speed_kmh.min() - 1.5, 0)
+            fig_ev.update_layout(yaxis_title="Vitesse fractions (km/h)", xaxis_title="",
+                                 yaxis=dict(range=[ymin, speed_kmh.max() + 1.5]))
+            st.plotly_chart(mobile_friendly(fig_ev), width='stretch', config=PLOTLY_CONFIG)
+
             choix = st.selectbox(
-                "Voir le détail d'une séance",
+                "Voir le détail d'une séance (fraction par fraction)",
                 vs.index,
                 format_func=lambda i: f"{vs.loc[i, 'date'].strftime('%d/%m')} — {vs.loc[i, 'name']}",
             )
             sel = vs.loc[choix]
             paces = sel["laps_paces"]
+            frac_speed = [3600 / p for p in paces]
             fig_fr = go.Figure()
             fig_fr.add_trace(go.Bar(
                 x=[f"F{i+1}" for i in range(len(paces))],
-                y=[p / 60 for p in paces], marker_color="#C00000",
-                hovertemplate="%{x} : %{customdata}<extra></extra>",
+                y=frac_speed, marker_color="#E06666",
+                hovertemplate="%{x} : %{y:.1f} km/h (%{customdata})<extra></extra>",
                 customdata=[_p(p) + "/km" for p in paces],
             ))
-            fig_fr.add_hline(y=sel["allure_moy_s"] / 60, line_dash="dash", line_color="#22303F",
-                             annotation_text=f"moyenne {_p(sel['allure_moy_s'])}/km")
-            fig_fr.update_layout(yaxis_title="Allure (min/km)", yaxis_autorange="reversed",
-                                 xaxis_title="Fractions")
+            mean_speed = 3600 / sel["allure_moy_s"]
+            fig_fr.add_hline(y=mean_speed, line_dash="dash", line_color="#22303F",
+                             annotation_text=f"moyenne {mean_speed:.1f} km/h ({_p(sel['allure_moy_s'])}/km)")
+            fmin = max(min(frac_speed) - 1.5, 0)
+            fig_fr.update_layout(yaxis_title="Vitesse (km/h) — plus haut = plus rapide",
+                                 xaxis_title=f"Fractions du {sel['date'].strftime('%d/%m')}",
+                                 yaxis=dict(range=[fmin, max(frac_speed) + 1.5]))
             st.plotly_chart(mobile_friendly(fig_fr), width='stretch', config=PLOTLY_CONFIG)
             if pd.notna(sel["regularite_s"]) and sel["regularite_s"] <= 8:
                 st.success(f"🟢 Régularité excellente (± {sel['regularite_s']:.0f} s) : "
