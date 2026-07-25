@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Semaine en zones Z1-Z5, cadence/VMA sur 1 an, habitudes de fractions.
+# Onglet Bonus dissous dans VMA / Charge & Risque / Séances (7 onglets).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

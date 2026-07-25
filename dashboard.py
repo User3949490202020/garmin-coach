@@ -447,7 +447,7 @@ if not activities.empty:
 if not wellness.empty:
     wellness["date"] = pd.to_datetime(wellness["date"])
 
-# FC max de l'athlète : valeur corrigée à la main si renseignée (onglet Bonus),
+# FC max de l'athlète : valeur corrigée à la main si renseignée (onglet VMA),
 # sinon le plus haut pic observé sur ses 6 derniers mois. Utilisée partout où
 # on classe l'intensité des séances.
 _hr_saved = storage.read_manual_note("hr_max", db_path=USER_DB_PATH)
@@ -457,9 +457,9 @@ HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
 # Karvonen (Z1-Z5 en % de réserve cardiaque). Sans données (Strava), défaut 55.
 HR_REST = analysis.current_rest_hr(wellness)
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_shoes, tab_bonus = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_shoes = st.tabs(
     ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
-     "📈 Charge & Risque", "🚀 VMA", "👟 Chaussures", "✨ Bonus"]
+     "📈 Charge & Risque", "🚀 VMA", "👟 Chaussures"]
 )
 
 # ----------------------------------------------------------------------
@@ -649,7 +649,8 @@ with tab_strava:
 
         st.subheader("Ta semaine, jour par jour")
         st.caption("Du lundi au dimanche : les kilomètres de chaque séance, colorés selon ta zone "
-                   "cardiaque Z1-Z5 (Karvonen — les mêmes couleurs que « Tes 5 zones » dans Bonus).")
+                   "cardiaque Z1-Z5 (Karvonen — les mêmes couleurs que « Tes 5 zones », à régler "
+                   "dans l'onglet VMA).")
         _today = pd.Timestamp.now().normalize()
         _week_start = _today - pd.Timedelta(days=_today.weekday())
         week_days = [_week_start + pd.Timedelta(days=i) for i in range(7)]
@@ -840,6 +841,51 @@ with tab_seances:
             st.caption("⚠️ Approximation basée sur une règle empirique (~0.6 %/°C au-dessus de 15°C), "
                        "pas un calcul physiologique individualisé — à lire comme une tendance, pas une "
                        "vérité chiffrée exacte.")
+
+        # --- 3. Dérive cardiaque ---
+        st.subheader("💓 Dérive cardiaque (sorties longues)")
+        st.caption("Sur une sortie longue à allure stable, si ta FC grimpe entre la 1ʳᵉ et la 2ᵉ "
+                   "moitié, c'est le signe que l'effort te coûte : **< 5 % = excellente endurance de "
+                   "base**, au-delà = fatigue, chaleur ou déshydratation. Seules les sorties ≥ 8 km "
+                   "à allure régulière sont analysées.")
+        drift = analysis.cardiac_drift(activities, laps)
+        if drift.empty:
+            st.caption("Aucune sortie longue analysable pour l'instant (il faut ≥ 8 km, une allure "
+                       "stable et le détail des tours synchronisé).")
+        else:
+            fig_dr = go.Figure()
+            drift_colors = ["seagreen" if d < 5 else ("orange" if d < 8 else "crimson")
+                            for d in drift["drift_pct"]]
+            fig_dr.add_trace(go.Bar(x=drift["date"], y=drift["drift_pct"], marker_color=drift_colors,
+                                     hovertemplate="%{x|%d/%m}<br>Dérive : %{y:.1f} %<extra></extra>"))
+            fig_dr.add_hline(y=5, line_dash="dash", line_color="gray",
+                             annotation_text="seuil 5 %")
+            fig_dr.update_layout(yaxis_title="Dérive FC (%)", xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_dr), width='stretch', config=PLOTLY_CONFIG)
+            if len(drift) >= 3 and (drift["drift_pct"].tail(3) < 5).mean() >= 0.67:
+                st.success("🟢 Tes dernières sorties longues montrent une FC stable : ton endurance "
+                           "fondamentale est solide.")
+
+
+        # --- 5. Cadence ---
+        st.subheader("👣 Ta cadence dans le temps")
+        st.caption("La cadence (pas/minute) est un marqueur de technique : une dérive vers le bas "
+                   "accompagne souvent la fatigue ou une foulée qui se dégrade. On ne vise pas "
+                   "180 à tout prix — on surveille **ta** tendance.")
+        cad = analysis.cadence_trend(activities, months=12)
+        if cad.empty:
+            st.caption("Pas de données de cadence sur la période.")
+        else:
+            fig_cad = go.Figure()
+            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["avg_cadence"], mode="markers",
+                                          name="Séances", marker=dict(color="lightgray", size=7)))
+            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["cadence_lissee"], mode="lines",
+                                          name="Tendance (10 séances)",
+                                          line=dict(color="#B08D57", width=3)))
+            fig_cad.update_layout(yaxis_title="Cadence (pas/min)", xaxis_title="")
+            st.plotly_chart(mobile_friendly(fig_cad), width='stretch', config=PLOTLY_CONFIG)
+
+
 
 # ----------------------------------------------------------------------
 # Récupération
@@ -1044,49 +1090,6 @@ with tab_charge:
         }
         st.info(zone_explanations.get(zone, ""))
 
-
-# ----------------------------------------------------------------------
-# Bonus — indicateurs avancés de progression
-# ----------------------------------------------------------------------
-with tab_bonus:
-    st.subheader("✨ Le labo de ta progression")
-    st.caption("Cinq lectures d'expert, calculées sur tes données réelles. À consulter une fois "
-               "par semaine : c'est ici qu'on voit si l'entraînement **paie** — et s'il est bien construit.")
-
-    if activities.empty:
-        st.info("Synchronise d'abord tes séances pour débloquer ces indicateurs.")
-    else:
-        # --- 0. FC max de référence (détectée, corrigeable) ---
-        st.markdown("**❤️ Ta FC max de référence**")
-        st.caption(f"Détectée automatiquement : **{HR_MAX_DETECTED} bpm** (ton plus haut pic des "
-                   "6 derniers mois). C'est elle qui calibre le classement facile/moyen/dur de "
-                   "toutes tes séances — corrige-la si tu connais ta vraie FCmax.")
-        hr_input = st.number_input("FC max (bpm)", min_value=150, max_value=220,
-                                   value=HR_MAX, step=1, key="hr_max_input")
-        if hr_input != HR_MAX:
-            storage.save_manual_note("hr_max", float(hr_input), db_path=USER_DB_PATH)
-            st.rerun()
-
-        # --- Tes 5 zones cardiaques en %FCR (Karvonen) ---
-        st.markdown("**🎯 Tes 5 zones cardiaques (Karvonen, % de réserve)**")
-        st.caption(f"Calculées sur TA réserve cardiaque : FCmax {HR_MAX} − FC repos {HR_REST} bpm "
-                   "(moyenne 28 j). Plus juste que le simple % de FCmax : c'est la référence des "
-                   "coureurs confirmés. Chaque séance de ton historique est taguée Z1-Z5.")
-        zones_df = analysis.hr_zones(HR_MAX, HR_REST)
-        fig_z = go.Figure()
-        for _, z in zones_df.iterrows():
-            fig_z.add_trace(go.Bar(
-                y=["Zones"], x=[z["bpm_max"] - z["bpm_min"]], base=[z["bpm_min"]],
-                orientation="h", name=f"{z['zone']} {z['label']}",
-                marker_color=z["color"],
-                hovertemplate=f"{z['zone']} — {z['label']}<br>{z['bpm_min']}–{z['bpm_max']} bpm<extra></extra>",
-                text=f"{z['zone']}<br>{z['bpm_min']}-{z['bpm_max']}",
-                textposition="inside",
-            ))
-        fig_z.update_layout(barmode="overlay", height=170, showlegend=False,
-                            xaxis=dict(title="bpm", range=[HR_REST, HR_MAX + 5]),
-                            margin=dict(t=10, b=10))
-        st.plotly_chart(mobile_friendly(fig_z), width='stretch', config=PLOTLY_CONFIG)
         st.divider()
 
         # --- 1. Équilibre 80/20 ---
@@ -1124,29 +1127,6 @@ with tab_bonus:
             else:
                 st.success(f"🟢 {pol['intense']:.0f} % d'intensité : équilibre idéal, continue.")
 
-        # --- 3. Dérive cardiaque ---
-        st.subheader("💓 Dérive cardiaque (sorties longues)")
-        st.caption("Sur une sortie longue à allure stable, si ta FC grimpe entre la 1ʳᵉ et la 2ᵉ "
-                   "moitié, c'est le signe que l'effort te coûte : **< 5 % = excellente endurance de "
-                   "base**, au-delà = fatigue, chaleur ou déshydratation. Seules les sorties ≥ 8 km "
-                   "à allure régulière sont analysées.")
-        drift = analysis.cardiac_drift(activities, laps)
-        if drift.empty:
-            st.caption("Aucune sortie longue analysable pour l'instant (il faut ≥ 8 km, une allure "
-                       "stable et le détail des tours synchronisé).")
-        else:
-            fig_dr = go.Figure()
-            drift_colors = ["seagreen" if d < 5 else ("orange" if d < 8 else "crimson")
-                            for d in drift["drift_pct"]]
-            fig_dr.add_trace(go.Bar(x=drift["date"], y=drift["drift_pct"], marker_color=drift_colors,
-                                     hovertemplate="%{x|%d/%m}<br>Dérive : %{y:.1f} %<extra></extra>"))
-            fig_dr.add_hline(y=5, line_dash="dash", line_color="gray",
-                             annotation_text="seuil 5 %")
-            fig_dr.update_layout(yaxis_title="Dérive FC (%)", xaxis_title="")
-            st.plotly_chart(mobile_friendly(fig_dr), width='stretch', config=PLOTLY_CONFIG)
-            if len(drift) >= 3 and (drift["drift_pct"].tail(3) < 5).mean() >= 0.67:
-                st.success("🟢 Tes dernières sorties longues montrent une FC stable : ton endurance "
-                           "fondamentale est solide.")
 
         # --- 4. Monotonie de charge ---
         st.subheader("🎢 Monotonie de charge (Foster)")
@@ -1173,29 +1153,47 @@ with tab_bonus:
             else:
                 st.success(f"🟢 Monotonie actuelle : {m_now:.1f} — bonne alternance dur/facile.")
 
-        # --- 5. Cadence ---
-        st.subheader("👣 Ta cadence dans le temps")
-        st.caption("La cadence (pas/minute) est un marqueur de technique : une dérive vers le bas "
-                   "accompagne souvent la fatigue ou une foulée qui se dégrade. On ne vise pas "
-                   "180 à tout prix — on surveille **ta** tendance.")
-        cad = analysis.cadence_trend(activities, months=12)
-        if cad.empty:
-            st.caption("Pas de données de cadence sur la période.")
-        else:
-            fig_cad = go.Figure()
-            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["avg_cadence"], mode="markers",
-                                          name="Séances", marker=dict(color="lightgray", size=7)))
-            fig_cad.add_trace(go.Scatter(x=cad["date"], y=cad["cadence_lissee"], mode="lines",
-                                          name="Tendance (10 séances)",
-                                          line=dict(color="#B08D57", width=3)))
-            fig_cad.update_layout(yaxis_title="Cadence (pas/min)", xaxis_title="")
-            st.plotly_chart(mobile_friendly(fig_cad), width='stretch', config=PLOTLY_CONFIG)
+
 
 # ----------------------------------------------------------------------
 # VMA — vitesse maximale aérobie : estimation + analyse des séances
 # ----------------------------------------------------------------------
 with tab_vma:
     st.subheader("🚀 Ta VMA")
+
+    # --- 0. FC max de référence (détectée, corrigeable) ---
+    st.markdown("**❤️ Ta FC max de référence**")
+    st.caption(f"Détectée automatiquement : **{HR_MAX_DETECTED} bpm** (ton plus haut pic des "
+               "6 derniers mois). C'est elle qui calibre le classement facile/moyen/dur de "
+               "toutes tes séances — corrige-la si tu connais ta vraie FCmax.")
+    hr_input = st.number_input("FC max (bpm)", min_value=150, max_value=220,
+                               value=HR_MAX, step=1, key="hr_max_input")
+    if hr_input != HR_MAX:
+        storage.save_manual_note("hr_max", float(hr_input), db_path=USER_DB_PATH)
+        st.rerun()
+
+    # --- Tes 5 zones cardiaques en %FCR (Karvonen) ---
+    st.markdown("**🎯 Tes 5 zones cardiaques (Karvonen, % de réserve)**")
+    st.caption(f"Calculées sur TA réserve cardiaque : FCmax {HR_MAX} − FC repos {HR_REST} bpm "
+               "(moyenne 28 j). Plus juste que le simple % de FCmax : c'est la référence des "
+               "coureurs confirmés. Chaque séance de ton historique est taguée Z1-Z5.")
+    zones_df = analysis.hr_zones(HR_MAX, HR_REST)
+    fig_z = go.Figure()
+    for _, z in zones_df.iterrows():
+        fig_z.add_trace(go.Bar(
+            y=["Zones"], x=[z["bpm_max"] - z["bpm_min"]], base=[z["bpm_min"]],
+            orientation="h", name=f"{z['zone']} {z['label']}",
+            marker_color=z["color"],
+            hovertemplate=f"{z['zone']} — {z['label']}<br>{z['bpm_min']}–{z['bpm_max']} bpm<extra></extra>",
+            text=f"{z['zone']}<br>{z['bpm_min']}-{z['bpm_max']}",
+            textposition="inside",
+        ))
+    fig_z.update_layout(barmode="overlay", height=170, showlegend=False,
+                        xaxis=dict(title="bpm", range=[HR_REST, HR_MAX + 5]),
+                        margin=dict(t=10, b=10))
+    st.plotly_chart(mobile_friendly(fig_z), width='stretch', config=PLOTLY_CONFIG)
+    st.divider()
+
     if activities.empty:
         st.info("Synchronise d'abord tes séances.")
     else:
