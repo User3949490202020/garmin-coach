@@ -45,6 +45,19 @@ STRAVA_CONFIGURED = bool(STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET and STRAVA_RE
 
 st.set_page_config(page_title="Coach Running Garmin", page_icon="🏃", layout="wide")
 
+# Sur téléphone, la barre d'onglets déborde et oblige à scroller vers la
+# droite : on l'autorise à passer sur plusieurs lignes (2 lignes sur mobile,
+# 1 seule sur ordinateur — ça s'adapte tout seul à la largeur de l'écran).
+st.markdown("""
+    <style>
+    div[data-baseweb="tab-list"] {
+        flex-wrap: wrap;
+        overflow-x: visible !important;
+        row-gap: 0.25rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 
 def mobile_friendly(fig):
     """
