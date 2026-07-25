@@ -194,7 +194,7 @@ with st.sidebar:
         # ci-dessus). La barre latérale n'affiche plus que statut + synchro.
         st.header("Connexion")
         active_source = st.session_state.get(
-            "active_source", "strava" if connected_strava else "garmin")
+            "active_source", "strava" if "strava_tokens" in st.session_state else "garmin")
         garmin_email = st.session_state.get("garmin_email")
         garmin_password = st.session_state.get("garmin_password")
         own_gemini_key = st.session_state.get("own_gemini_key")
