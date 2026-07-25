@@ -1165,7 +1165,7 @@ with tab_vma:
         st.caption("Estimation d'entraînement : vitesse équivalente sur 3 000 m dérivée de ta "
                    "meilleure perf des 8 dernières semaines (Riegel). Un vrai test de terrain "
                    "(demi-Cooper : 6 min à fond) reste plus précis — l'estimation sert de tendance.")
-        vma_curve = analysis.vma_estimate_curve(activities)
+        vma_curve = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX)
         if vma_curve.empty:
             st.caption("Pas encore assez de séances ≥ 3 km pour estimer ta vVMA.")
         else:
@@ -1178,10 +1178,14 @@ with tab_vma:
             vcols[2].metric("Allure fractions (95 %)",
                             f"{int(pace_105 // 60)}:{int(pace_105 % 60):02d}/km")
             if len(vma_curve) >= 2:
-                fig_vc = px.line(vma_curve, x="date", y="vma_kmh", markers=True, line_shape="spline")
+                fig_vc = px.line(vma_curve, x="date", y="vma_kmh", markers=True)
                 fig_vc.update_traces(line=dict(width=3, color="#C00000"))
                 fig_vc.update_layout(yaxis_title="vVMA estimée (km/h)", xaxis_title="")
                 st.plotly_chart(mobile_friendly(fig_vc), width='stretch', config=PLOTLY_CONFIG)
+                st.caption("ℹ️ L'estimation prend le meilleur des deux signaux : ta meilleure "
+                           "séance continue **et** la vitesse de tes fractions de VMA. Note : le "
+                           "détail des tours n'existe que sur les ~30 dernières séances, donc les "
+                           "points anciens s'appuient surtout sur les séances continues.")
 
         st.divider()
 

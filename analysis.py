@@ -822,33 +822,57 @@ def session_zone(avg_hr, hr_max: int, hr_rest: int):
     return "Z5"
 
 
-def vma_estimate_curve(activities_df: pd.DataFrame, months: int = 6) -> pd.DataFrame:
+def vma_estimate_curve(activities_df: pd.DataFrame, laps_df: pd.DataFrame = None,
+                       hr_max: int = 190, months: int = 6) -> pd.DataFrame:
     """
-    vVMA ESTIMÉE (km/h) toutes les 2 semaines : vitesse équivalente sur
-    3 000 m (Riegel) à partir de la meilleure perf des 8 semaines précédentes
-    (séances >= 3 km). C'est une approximation d'entraînement, pas un test
-    de terrain — à lire comme une tendance.
+    vVMA ESTIMÉE (km/h) toutes les 2 semaines, à partir du MEILLEUR des deux
+    signaux disponibles sur les 8 semaines précédentes :
+
+    1. La meilleure séance CONTINUE (>= 3 km), ramenée en vitesse équivalente
+       3 000 m (Riegel) — pertinent quand on fait des sorties rapides/courses.
+    2. La vitesse des FRACTIONS des séances de VMA (x0.97, les fractions
+       courtes se courant légèrement au-dessus de la vVMA) — indispensable :
+       une séance de fractionné a une allure MOYENNE lente (récupérations),
+       et sans ce signal, s'entraîner en fractionné faisait BAISSER
+       l'estimation, un contresens.
+
+    Reste une approximation d'entraînement — un test de terrain est plus précis.
     """
     df = activities_df.copy()
     if df.empty:
         return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"])
     df = df.dropna(subset=["avg_pace_s_per_km", "distance_km"])
-    df = df[df["distance_km"] >= 3]
     if "is_warmup" in df.columns:
         df = df[~df["is_warmup"]]
-    if df.empty:
-        return pd.DataFrame()
+    continuous = df[df["distance_km"] >= 3]
+
+    # Signal fractions : une vitesse de VMA par séance de fractionné analysable
+    frac = pd.DataFrame()
+    if laps_df is not None and not laps_df.empty:
+        vs = vma_sessions(activities_df, laps_df, hr_max=hr_max, months=months + 3)
+        if not vs.empty:
+            frac = pd.DataFrame({
+                "date": pd.to_datetime(vs["date"]),
+                "vma_kmh": (3600 / vs["allure_moy_s"]) * 0.97,
+            })
 
     points = []
     end = pd.Timestamp.now().normalize()
     for ts in pd.date_range(end - pd.DateOffset(months=months), end, freq="14D"):
-        window = df[(df["date"] <= ts) & (df["date"] > ts - pd.Timedelta(weeks=8))]
-        if window.empty:
-            continue
-        best = window.loc[window["avg_pace_s_per_km"].idxmin()]
-        pace_3k = best["avg_pace_s_per_km"] * (3 / best["distance_km"]) ** 0.06
-        points.append({"date": ts, "vma_kmh": 3600 / pace_3k})
+        candidates = []
+        window = continuous[(continuous["date"] <= ts)
+                            & (continuous["date"] > ts - pd.Timedelta(weeks=8))]
+        if not window.empty:
+            best = window.loc[window["avg_pace_s_per_km"].idxmin()]
+            pace_3k = best["avg_pace_s_per_km"] * (3 / best["distance_km"]) ** 0.06
+            candidates.append(3600 / pace_3k)
+        if not frac.empty:
+            fwin = frac[(frac["date"] <= ts) & (frac["date"] > ts - pd.Timedelta(weeks=8))]
+            if not fwin.empty:
+                candidates.append(fwin["vma_kmh"].max())
+        if candidates:
+            points.append({"date": ts, "vma_kmh": max(candidates)})
     return pd.DataFrame(points)
 
 
