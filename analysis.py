@@ -770,3 +770,126 @@ def cadence_trend(activities_df: pd.DataFrame, months=6) -> pd.DataFrame:
         return df
     df["cadence_lissee"] = df["avg_cadence"].rolling(10, min_periods=3).mean()
     return df
+
+
+# ======================================================================
+# Zones cardiaques en %FCR (Karvonen) et analyse VMA
+# ======================================================================
+
+# Bornes des 5 zones en % de la réserve cardiaque (FCmax - FCrepos),
+# le découpage de référence chez les coureurs confirmés.
+HR_ZONES_DEF = [
+    ("Z1", "Récupération", 0.50, 0.60, "#5B9BD5"),
+    ("Z2", "Endurance fondamentale", 0.60, 0.70, "#70AD47"),
+    ("Z3", "Tempo", 0.70, 0.80, "#FFC000"),
+    ("Z4", "Seuil", 0.80, 0.90, "#ED7D31"),
+    ("Z5", "VMA", 0.90, 1.00, "#C00000"),
+]
+
+
+def current_rest_hr(wellness_df: pd.DataFrame, default: int = 55) -> int:
+    """FC repos actuelle : moyenne des 28 derniers jours mesurés (sinon défaut)."""
+    if wellness_df is None or wellness_df.empty or "resting_hr" not in wellness_df.columns:
+        return default
+    vals = wellness_df.sort_values("date")["resting_hr"].dropna().tail(28)
+    return int(round(vals.mean())) if len(vals) else default
+
+
+def hr_zones(hr_max: int, hr_rest: int) -> pd.DataFrame:
+    """Les 5 zones Karvonen traduites en bpm PERSONNALISÉS."""
+    reserve = max(hr_max - hr_rest, 1)
+    rows = []
+    for code, label, lo, hi, color in HR_ZONES_DEF:
+        rows.append({
+            "zone": code, "label": label,
+            "bpm_min": int(round(hr_rest + lo * reserve)),
+            "bpm_max": int(round(hr_rest + hi * reserve)),
+            "color": color,
+        })
+    return pd.DataFrame(rows)
+
+
+def session_zone(avg_hr, hr_max: int, hr_rest: int):
+    """Zone Karvonen (Z1-Z5) d'une séance d'après sa FC moyenne, ou None."""
+    if pd.isna(avg_hr):
+        return None
+    pct = (avg_hr - hr_rest) / max(hr_max - hr_rest, 1)
+    if pct < 0.50:
+        return "Z1"
+    for code, _, lo, hi, _ in HR_ZONES_DEF:
+        if lo <= pct < hi:
+            return code
+    return "Z5"
+
+
+def vma_estimate_curve(activities_df: pd.DataFrame, months: int = 6) -> pd.DataFrame:
+    """
+    vVMA ESTIMÉE (km/h) toutes les 2 semaines : vitesse équivalente sur
+    3 000 m (Riegel) à partir de la meilleure perf des 8 semaines précédentes
+    (séances >= 3 km). C'est une approximation d'entraînement, pas un test
+    de terrain — à lire comme une tendance.
+    """
+    df = activities_df.copy()
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.dropna(subset=["avg_pace_s_per_km", "distance_km"])
+    df = df[df["distance_km"] >= 3]
+    if "is_warmup" in df.columns:
+        df = df[~df["is_warmup"]]
+    if df.empty:
+        return pd.DataFrame()
+
+    points = []
+    end = pd.Timestamp.now().normalize()
+    for ts in pd.date_range(end - pd.DateOffset(months=months), end, freq="14D"):
+        window = df[(df["date"] <= ts) & (df["date"] > ts - pd.Timedelta(weeks=8))]
+        if window.empty:
+            continue
+        best = window.loc[window["avg_pace_s_per_km"].idxmin()]
+        pace_3k = best["avg_pace_s_per_km"] * (3 / best["distance_km"]) ** 0.06
+        points.append({"date": ts, "vma_kmh": 3600 / pace_3k})
+    return pd.DataFrame(points)
+
+
+def vma_sessions(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
+                 hr_max: int = 190, months: int = 6) -> pd.DataFrame:
+    """
+    Analyse des séances de VMA/fractionné : pour chaque séance classée "Dur"
+    dont on a le détail des tours, isole les FRACTIONS RAPIDES (tours courts
+    nettement plus vite que le rythme médian de la séance) et calcule :
+    nb de fractions, allure moyenne, meilleure fraction, régularité (écart
+    entre fractions). Retourne une ligne par séance + les allures des
+    fractions (colonne `laps_paces`) pour le graphique de détail.
+    """
+    if activities_df.empty or laps_df is None or laps_df.empty:
+        return pd.DataFrame()
+    intens = session_intensity(activities_df, hr_max=hr_max)
+    hard = intens[intens["intensite"] == "Dur"].copy()
+    if hard.empty:
+        return pd.DataFrame()
+    hard["date"] = pd.to_datetime(hard["date"])
+    hard = hard[hard["date"] >= pd.Timestamp.now() - pd.DateOffset(months=months)]
+
+    rows = []
+    for _, a in hard.iterrows():
+        lp = laps_df[laps_df["activity_id"] == a["activity_id"]].sort_values("lap_index")
+        lp = lp.dropna(subset=["avg_pace_s_per_km"])
+        lp = lp[lp["distance_km"] > 0.05]
+        if len(lp) < 4:
+            continue
+        median_pace = lp["avg_pace_s_per_km"].median()
+        fast = lp[(lp["avg_pace_s_per_km"] < median_pace - 20) & (lp["distance_km"] <= 1.6)]
+        if len(fast) < 3:
+            continue
+        paces = fast["avg_pace_s_per_km"].tolist()
+        rows.append({
+            "date": a["date"], "name": a["name"], "activity_id": a["activity_id"],
+            "nb_fractions": len(fast),
+            "dist_fraction_km": fast["distance_km"].mean(),
+            "allure_moy_s": fast["avg_pace_s_per_km"].mean(),
+            "meilleure_s": fast["avg_pace_s_per_km"].min(),
+            "regularite_s": fast["avg_pace_s_per_km"].std(),
+            "laps_paces": paces,
+        })
+    return pd.DataFrame(rows).sort_values("date", ascending=False) if rows else pd.DataFrame()

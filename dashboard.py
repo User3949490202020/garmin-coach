@@ -430,10 +430,13 @@ if not wellness.empty:
 _hr_saved = storage.read_manual_note("hr_max", db_path=USER_DB_PATH)
 HR_MAX_DETECTED = analysis.observed_hr_max(activities)
 HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
+# FC repos actuelle (moyenne 28 j) : avec la FCmax, elle définit les zones
+# Karvonen (Z1-Z5 en % de réserve cardiaque). Sans données (Strava), défaut 55.
+HR_REST = analysis.current_rest_hr(wellness)
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_bonus = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_shoes, tab_bonus = st.tabs(
     ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
-     "📈 Charge & Risque", "✨ Bonus"]
+     "📈 Charge & Risque", "🚀 VMA", "👟 Chaussures", "✨ Bonus"]
 )
 
 # ----------------------------------------------------------------------
@@ -739,6 +742,9 @@ with tab_seances:
         if "is_warmup" in display_df.columns:
             display_df["rôle"] = display_df["is_warmup"].map(
                 {True: "🔥 échauffement", False: ""})
+        # Zone cardiaque Karvonen (Z1-Z5), en plus des catégories facile/moyen/dur
+        display_df["zone"] = display_df["avg_hr"].apply(
+            lambda h: analysis.session_zone(h, HR_MAX, HR_REST) or "—")
         if "temp_c" in display_df.columns:
             display_df["météo"] = display_df.apply(
                 lambda r: (f"{r['temp_c']:.0f}°C (ressenti {r['feels_like_c']:.0f}°C)"
@@ -749,7 +755,7 @@ with tab_seances:
         else:
             display_df["météo"] = "N/A"
 
-        cols_to_show = ["date", "jour", "name", "rôle", "distance_km", "allure_min_km",
+        cols_to_show = ["date", "jour", "name", "rôle", "zone", "distance_km", "allure_min_km",
                         "avg_hr", "avg_cadence", "elevation_gain", "météo"]
         st.dataframe(display_df[[c for c in cols_to_show if c in display_df.columns]], width='stretch')
         st.caption("La météo n'est récupérée automatiquement que pour les 15 séances les plus récentes "
@@ -1021,6 +1027,27 @@ with tab_bonus:
         if hr_input != HR_MAX:
             storage.save_manual_note("hr_max", float(hr_input), db_path=USER_DB_PATH)
             st.rerun()
+
+        # --- Tes 5 zones cardiaques en %FCR (Karvonen) ---
+        st.markdown("**🎯 Tes 5 zones cardiaques (Karvonen, % de réserve)**")
+        st.caption(f"Calculées sur TA réserve cardiaque : FCmax {HR_MAX} − FC repos {HR_REST} bpm "
+                   "(moyenne 28 j). Plus juste que le simple % de FCmax : c'est la référence des "
+                   "coureurs confirmés. Chaque séance de ton historique est taguée Z1-Z5.")
+        zones_df = analysis.hr_zones(HR_MAX, HR_REST)
+        fig_z = go.Figure()
+        for _, z in zones_df.iterrows():
+            fig_z.add_trace(go.Bar(
+                y=["Zones"], x=[z["bpm_max"] - z["bpm_min"]], base=[z["bpm_min"]],
+                orientation="h", name=f"{z['zone']} {z['label']}",
+                marker_color=z["color"],
+                hovertemplate=f"{z['zone']} — {z['label']}<br>{z['bpm_min']}–{z['bpm_max']} bpm<extra></extra>",
+                text=f"{z['zone']}<br>{z['bpm_min']}-{z['bpm_max']}",
+                textposition="inside",
+            ))
+        fig_z.update_layout(barmode="overlay", height=170, showlegend=False,
+                            xaxis=dict(title="bpm", range=[HR_REST, HR_MAX + 5]),
+                            margin=dict(t=10, b=10))
+        st.plotly_chart(mobile_friendly(fig_z), width='stretch', config=PLOTLY_CONFIG)
         st.divider()
 
         # --- 1. Équilibre 80/20 ---
@@ -1124,3 +1151,185 @@ with tab_bonus:
                                           line=dict(color="#B08D57", width=3)))
             fig_cad.update_layout(yaxis_title="Cadence (pas/min)", xaxis_title="")
             st.plotly_chart(mobile_friendly(fig_cad), width='stretch', config=PLOTLY_CONFIG)
+
+# ----------------------------------------------------------------------
+# VMA — vitesse maximale aérobie : estimation + analyse des séances
+# ----------------------------------------------------------------------
+with tab_vma:
+    st.subheader("🚀 Ta VMA")
+    if activities.empty:
+        st.info("Synchronise d'abord tes séances.")
+    else:
+        # --- vVMA estimée + évolution ---
+        st.markdown("**Ta vVMA estimée**")
+        st.caption("Estimation d'entraînement : vitesse équivalente sur 3 000 m dérivée de ta "
+                   "meilleure perf des 8 dernières semaines (Riegel). Un vrai test de terrain "
+                   "(demi-Cooper : 6 min à fond) reste plus précis — l'estimation sert de tendance.")
+        vma_curve = analysis.vma_estimate_curve(activities)
+        if vma_curve.empty:
+            st.caption("Pas encore assez de séances ≥ 3 km pour estimer ta vVMA.")
+        else:
+            vma_now = vma_curve["vma_kmh"].iloc[-1]
+            vcols = st.columns(3)
+            vcols[0].metric("vVMA estimée", f"{vma_now:.1f} km/h")
+            pace_vma = 3600 / vma_now
+            vcols[1].metric("Allure VMA", f"{int(pace_vma // 60)}:{int(pace_vma % 60):02d}/km")
+            pace_105 = 3600 / (vma_now * 0.95)
+            vcols[2].metric("Allure fractions (95 %)",
+                            f"{int(pace_105 // 60)}:{int(pace_105 % 60):02d}/km")
+            if len(vma_curve) >= 2:
+                fig_vc = px.line(vma_curve, x="date", y="vma_kmh", markers=True, line_shape="spline")
+                fig_vc.update_traces(line=dict(width=3, color="#C00000"))
+                fig_vc.update_layout(yaxis_title="vVMA estimée (km/h)", xaxis_title="")
+                st.plotly_chart(mobile_friendly(fig_vc), width='stretch', config=PLOTLY_CONFIG)
+
+        st.divider()
+
+        # --- Analyse des séances de fractionné ---
+        st.markdown("**Tes séances de VMA passées au crible**")
+        st.caption("Pour chaque séance dure avec le détail des tours : les fractions rapides "
+                   "isolées, leur allure moyenne, la meilleure, et la régularité (écart entre "
+                   "fractions — un bon fractionné est RÉGULIER, pas explosif puis à l'agonie).")
+        vs = analysis.vma_sessions(activities, laps, hr_max=HR_MAX)
+        if vs.empty:
+            st.caption("Aucune séance de fractionné analysable pour l'instant : il faut des séances "
+                       "dures avec le détail des tours (synchronisé sur les 30 dernières séances — "
+                       "resynchronise pour élargir l'historique).")
+        else:
+            def _p(s):
+                return f"{int(s // 60)}:{int(s % 60):02d}"
+            table = pd.DataFrame({
+                "Date": vs["date"].dt.strftime("%d/%m"),
+                "Séance": vs["name"],
+                "Fractions": vs["nb_fractions"].astype(int),
+                "Dist. moy.": (vs["dist_fraction_km"] * 1000).round(0).astype(int).astype(str) + " m",
+                "Allure moy.": vs["allure_moy_s"].apply(_p) + "/km",
+                "Meilleure": vs["meilleure_s"].apply(_p) + "/km",
+                "Régularité (±s)": vs["regularite_s"].round(1),
+            })
+            st.dataframe(table, hide_index=True, width='stretch')
+
+            choix = st.selectbox(
+                "Voir le détail d'une séance",
+                vs.index,
+                format_func=lambda i: f"{vs.loc[i, 'date'].strftime('%d/%m')} — {vs.loc[i, 'name']}",
+            )
+            sel = vs.loc[choix]
+            paces = sel["laps_paces"]
+            fig_fr = go.Figure()
+            fig_fr.add_trace(go.Bar(
+                x=[f"F{i+1}" for i in range(len(paces))],
+                y=[p / 60 for p in paces], marker_color="#C00000",
+                hovertemplate="%{x} : %{customdata}<extra></extra>",
+                customdata=[_p(p) + "/km" for p in paces],
+            ))
+            fig_fr.add_hline(y=sel["allure_moy_s"] / 60, line_dash="dash", line_color="#22303F",
+                             annotation_text=f"moyenne {_p(sel['allure_moy_s'])}/km")
+            fig_fr.update_layout(yaxis_title="Allure (min/km)", yaxis_autorange="reversed",
+                                 xaxis_title="Fractions")
+            st.plotly_chart(mobile_friendly(fig_fr), width='stretch', config=PLOTLY_CONFIG)
+            if pd.notna(sel["regularite_s"]) and sel["regularite_s"] <= 8:
+                st.success(f"🟢 Régularité excellente (± {sel['regularite_s']:.0f} s) : "
+                           "allure maîtrisée du début à la fin.")
+            elif pd.notna(sel["regularite_s"]) and sel["regularite_s"] > 15:
+                st.warning(f"🟠 Fractions irrégulières (± {sel['regularite_s']:.0f} s) : pars "
+                           "moins vite sur les premières, l'objectif est de tenir la MÊME allure.")
+
+# ----------------------------------------------------------------------
+# Chaussures — parc, usure, records par paire
+# ----------------------------------------------------------------------
+with tab_shoes:
+    st.subheader("👟 Ton parc de chaussures")
+    shoes_df = storage.read_df("shoes", db_path=USER_DB_PATH)
+    assign_df = storage.read_df("activity_shoes", db_path=USER_DB_PATH)
+
+    with st.expander("➕ Ajouter une paire", expanded=shoes_df.empty):
+        with st.form("add_shoe"):
+            sc1, sc2, sc3 = st.columns([2, 2, 1])
+            shoe_name = sc1.text_input("Modèle", placeholder="Ex : Pegasus 41")
+            shoe_brand = sc2.text_input("Marque", placeholder="Ex : Nike")
+            shoe_target = sc3.number_input("Durée de vie (km)", 300, 1500, 700, step=50)
+            if st.form_submit_button("Ajouter") and shoe_name.strip():
+                storage.add_shoe(shoe_name.strip(), shoe_brand.strip(), shoe_target,
+                                 db_path=USER_DB_PATH)
+                st.rerun()
+
+    if shoes_df.empty:
+        st.info("Ajoute ta première paire ci-dessus, puis assigne tes séances : kilométrage, "
+                "usure et records par paire apparaîtront ici.")
+    else:
+        # Paire par défaut : toutes les séances non assignées lui sont comptées
+        actives = shoes_df[shoes_df["retired"] == 0]
+        default_saved = storage.read_manual_note("default_shoe_id", db_path=USER_DB_PATH)
+        default_id = int(default_saved[0]) if default_saved else None
+        if not actives.empty:
+            options = actives["id"].tolist()
+            idx = options.index(default_id) if default_id in options else 0
+            default_id = st.selectbox(
+                "Paire par défaut (les séances non assignées lui sont attribuées)",
+                options, index=idx,
+                format_func=lambda i: f"{actives.set_index('id').loc[i, 'brand']} "
+                                      f"{actives.set_index('id').loc[i, 'name']}".strip(),
+            )
+            if not default_saved or int(default_saved[0]) != default_id:
+                storage.save_manual_note("default_shoe_id", float(default_id), db_path=USER_DB_PATH)
+
+        # Kilométrage par paire (assignées + défaut pour les non-assignées)
+        acts_shoes = activities.copy()
+        if not acts_shoes.empty:
+            mapping = assign_df.set_index("activity_id")["shoe_id"] if not assign_df.empty else pd.Series(dtype=float)
+            acts_shoes["shoe_id"] = acts_shoes["activity_id"].astype(str).map(mapping)
+            if default_id is not None:
+                acts_shoes["shoe_id"] = acts_shoes["shoe_id"].fillna(default_id)
+
+        st.markdown("### Tes paires")
+        for _, shoe in shoes_df.sort_values("retired").iterrows():
+            runs = acts_shoes[acts_shoes["shoe_id"] == shoe["id"]] if not acts_shoes.empty else pd.DataFrame()
+            km = runs["distance_km"].sum() if not runs.empty else 0.0
+            target = shoe["km_target"] or 700
+            pct = min(km / target, 1.0)
+            titre = f"{shoe['brand']} {shoe['name']}".strip()
+            if shoe["retired"]:
+                titre += " · 🪦 retraitée"
+            with st.container(border=True):
+                hc1, hc2 = st.columns([3, 1])
+                hc1.markdown(f"**{titre}**")
+                if shoe["id"] == default_id and not shoe["retired"]:
+                    hc1.caption("⭐ paire par défaut")
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("Kilométrage", f"{km:.0f} km")
+                mc2.metric("Séances", len(runs))
+                if not runs.empty and runs["avg_pace_s_per_km"].notna().any():
+                    best = runs["avg_pace_s_per_km"].min()
+                    mc3.metric("Meilleure allure", f"{int(best // 60)}:{int(best % 60):02d}/km")
+                st.progress(pct, text=f"Usure : {km:.0f} / {target:.0f} km"
+                            + (" — ⚠️ pense au renouvellement !" if pct >= 0.85 else ""))
+                bc1, bc2 = st.columns(2)
+                if not shoe["retired"] and bc1.button("Mettre à la retraite", key=f"ret{shoe['id']}"):
+                    storage.set_shoe_retired(int(shoe["id"]), True, db_path=USER_DB_PATH)
+                    st.rerun()
+                if shoe["retired"] and bc1.button("Réactiver", key=f"unret{shoe['id']}"):
+                    storage.set_shoe_retired(int(shoe["id"]), False, db_path=USER_DB_PATH)
+                    st.rerun()
+
+        # Réassigner une séance récente à une autre paire
+        if not activities.empty and not actives.empty:
+            with st.expander("🔁 Assigner une séance à une paire précise"):
+                recent = activities.sort_values("date", ascending=False).head(20)
+                run_choice = st.selectbox(
+                    "Séance", recent["activity_id"],
+                    format_func=lambda a: (
+                        f"{recent.set_index('activity_id').loc[a, 'date'].strftime('%d/%m')} — "
+                        f"{recent.set_index('activity_id').loc[a, 'name']} "
+                        f"({recent.set_index('activity_id').loc[a, 'distance_km']:.1f} km)"),
+                )
+                shoe_choice = st.selectbox(
+                    "Paire", actives["id"],
+                    format_func=lambda i: f"{actives.set_index('id').loc[i, 'brand']} "
+                                          f"{actives.set_index('id').loc[i, 'name']}".strip(),
+                    key="assign_shoe_choice",
+                )
+                if st.button("✅ Assigner"):
+                    storage.assign_shoe(str(run_choice), int(shoe_choice), db_path=USER_DB_PATH)
+                    st.success("Séance assignée !")
+                    st.rerun()

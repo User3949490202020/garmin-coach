@@ -112,6 +112,20 @@ CREATE TABLE IF NOT EXISTS chat_history (
     role TEXT,
     content TEXT
 );
+
+CREATE TABLE IF NOT EXISTS shoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    brand TEXT,
+    km_target REAL DEFAULT 700,
+    retired INTEGER DEFAULT 0,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS activity_shoes (
+    activity_id TEXT PRIMARY KEY,
+    shoe_id INTEGER
+);
 """
 
 MIGRATIONS = {
@@ -285,6 +299,38 @@ def read_chat_history(hours: int = 12, db_path=None) -> list[dict]:
 def clear_chat_history(db_path=None):
     conn = get_conn(db_path)
     conn.execute("DELETE FROM chat_history")
+    conn.commit()
+    conn.close()
+
+
+# ----------------------------------------------------------------------
+# Parc de chaussures (par utilisateur)
+# ----------------------------------------------------------------------
+def add_shoe(name: str, brand: str = "", km_target: float = 700, db_path=None):
+    import datetime as _dt
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO shoes (name, brand, km_target, created_at) VALUES (?, ?, ?, ?)",
+                 (name, brand, km_target, _dt.date.today().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def set_shoe_retired(shoe_id: int, retired: bool, db_path=None):
+    conn = get_conn(db_path)
+    conn.execute("UPDATE shoes SET retired = ? WHERE id = ?", (1 if retired else 0, shoe_id))
+    conn.commit()
+    conn.close()
+
+
+def assign_shoe(activity_id: str, shoe_id, db_path=None):
+    """Assigne (ou retire si shoe_id None) une paire à une séance."""
+    conn = get_conn(db_path)
+    if shoe_id is None:
+        conn.execute("DELETE FROM activity_shoes WHERE activity_id = ?", (str(activity_id),))
+    else:
+        conn.execute("""INSERT INTO activity_shoes (activity_id, shoe_id) VALUES (?, ?)
+                        ON CONFLICT(activity_id) DO UPDATE SET shoe_id=excluded.shoe_id""",
+                     (str(activity_id), int(shoe_id)))
     conn.commit()
     conn.close()
 

@@ -27,7 +27,7 @@ import storage
 import weather
 
 
-def sync_activities(provider: DataProvider, months=6, laps_limit=15, weather_limit=80, db_path=None):
+def sync_activities(provider: DataProvider, months=6, laps_limit=30, weather_limit=80, db_path=None):
     print(f"→ Récupération des activités de course des {months} derniers mois...")
     acts = provider.get_activities(months=months)
     for a in acts:
