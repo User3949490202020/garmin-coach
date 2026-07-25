@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Objectif : validité 1,5 mois affichée + rappel au-delà.
+# Trace d'usage + panneau Fréquentation (admin).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

@@ -7,6 +7,7 @@ Lance avec : streamlit run dashboard.py
 import datetime as dt
 import json
 import os
+import uuid
 
 import pandas as pd
 import plotly.express as px
@@ -29,7 +30,7 @@ load_dotenv()
 # du code (qui lit os.getenv) fonctionne pareil dans les deux cas.
 try:
     for _key in ("GEMINI_API_KEY", "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET",
-                 "STRAVA_REDIRECT_URI"):
+                 "STRAVA_REDIRECT_URI", "ADMIN_EMAIL"):
         if _key in st.secrets and not os.getenv(_key):
             os.environ[_key] = str(st.secrets[_key])
 except Exception:
@@ -225,6 +226,46 @@ with st.sidebar:
             st.query_params.clear()
             st.rerun()
         st.divider()
+
+    # --- Trace d'usage : une ligne par visite (qui, quand, combien de temps).
+    # Uniquement identifiant + horodatages, rien d'autre. Sert au panneau
+    # "Fréquentation" ci-dessous, visible par l'administrateur seul.
+    if "visit_id" not in st.session_state:
+        st.session_state.visit_id = uuid.uuid4().hex
+    _usage_ident = (garmin_email if active_source == "garmin"
+                    else f"strava-{st.session_state.strava_tokens.get('athlete_id')}")
+    try:
+        storage.touch_usage(st.session_state.visit_id, _usage_ident or "inconnu", active_source)
+    except Exception:
+        pass
+
+    _admin_email = os.getenv("ADMIN_EMAIL", "")
+    if LOCAL_MODE or (_admin_email and (garmin_email or "").lower() == _admin_email.lower()):
+        with st.expander("📊 Fréquentation (admin)"):
+            usage = storage.read_usage()
+            if usage.empty:
+                st.caption("Aucune visite enregistrée pour l'instant.")
+            else:
+                usage["started_at"] = pd.to_datetime(usage["started_at"])
+                usage["last_seen"] = pd.to_datetime(usage["last_seen"])
+                usage["duree_min"] = ((usage["last_seen"] - usage["started_at"])
+                                      .dt.total_seconds() / 60).round(1)
+                uc1, uc2, uc3 = st.columns(3)
+                uc1.metric("Utilisateurs", usage["ident"].nunique())
+                uc2.metric("Visites", len(usage))
+                uc3.metric("Durée moy.", f"{usage['duree_min'].mean():.0f} min")
+                par_user = (usage.groupby("ident")
+                            .agg(visites=("session_id", "count"),
+                                 minutes=("duree_min", "sum"),
+                                 derniere_visite=("last_seen", "max"))
+                            .sort_values("derniere_visite", ascending=False)
+                            .reset_index())
+                par_user["derniere_visite"] = par_user["derniere_visite"].dt.strftime("%d/%m %H:%M")
+                st.dataframe(par_user, hide_index=True, width='stretch')
+                st.bar_chart(usage.groupby(usage["started_at"].dt.date).size(),
+                             height=160)
+            st.caption("⚠️ Ces compteurs repartent de zéro à chaque mise à jour de "
+                       "l'appli (stockage éphémère de l'hébergement gratuit).")
 
     st.header("Synchronisation")
     # Fenêtres de synchro fixes : 6 mois de séances, 30 jours de récupération

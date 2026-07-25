@@ -299,7 +299,41 @@ def _sessions_conn():
     conn = sqlite3.connect(data_dir / "sessions.db")
     conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY, source TEXT, ident TEXT, created_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS usage_sessions (
+        session_id TEXT PRIMARY KEY, ident TEXT, source TEXT,
+        started_at TEXT, last_seen TEXT)""")
     return conn
+
+
+def touch_usage(session_id: str, ident: str, source: str):
+    """
+    Trace d'usage anonyme-légère (identifiant + horodatages uniquement) :
+    appelée à chaque affichage, elle crée la session de visite au premier
+    passage puis met à jour "vu pour la dernière fois". La durée d'une visite
+    = last_seen - started_at.
+    """
+    import datetime as _dt
+    now = _dt.datetime.now().isoformat(timespec="seconds")
+    conn = _sessions_conn()
+    conn.execute(
+        """INSERT INTO usage_sessions (session_id, ident, source, started_at, last_seen)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET last_seen=excluded.last_seen""",
+        (session_id, ident, source, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def read_usage():
+    """Toutes les visites enregistrées (pour le panneau admin)."""
+    import pandas as pd
+    conn = _sessions_conn()
+    try:
+        df = pd.read_sql("SELECT * FROM usage_sessions", conn)
+    finally:
+        conn.close()
+    return df
 
 
 def create_session_token(source: str, ident: str) -> str:
