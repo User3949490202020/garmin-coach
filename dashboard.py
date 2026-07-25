@@ -659,10 +659,10 @@ with tab_strava:
         week_acts = activities[(activities["date"] >= _week_start)
                                & (activities["date"] < _week_start + pd.Timedelta(days=7))]
         zone_colors = {z[0]: z[4] for z in analysis.HR_ZONES_DEF}
-        zone_colors["—"] = "lightgray"
+        zone_colors["sans FC"] = "lightgray"
         rows_week = []
         for _, a in week_acts.iterrows():
-            z = analysis.session_zone(a["avg_hr"], HR_MAX, HR_REST) or "—"
+            z = analysis.session_zone(a["avg_hr"], HR_MAX, HR_REST) or "sans FC"
             rows_week.append({"Jour": day_labels[int(a["date"].weekday())],
                               "km": a["distance_km"], "Zone": z,
                               "seance": a["name"]})
@@ -674,12 +674,12 @@ with tab_strava:
             _jours_courus = {r["Jour"] for r in rows_week}
             for lbl in day_labels:
                 if lbl not in _jours_courus:
-                    rows_week.append({"Jour": lbl, "km": 0, "Zone": "—", "seance": ""})
+                    rows_week.append({"Jour": lbl, "km": 0, "Zone": "sans FC", "seance": ""})
             week_df = pd.DataFrame(rows_week)
             fig_wk = px.bar(
                 week_df, x="Jour", y="km", color="Zone",
                 color_discrete_map=zone_colors,
-                category_orders={"Jour": day_labels, "Zone": ["Z1", "Z2", "Z3", "Z4", "Z5", "—"]},
+                category_orders={"Jour": day_labels, "Zone": ["Z1", "Z2", "Z3", "Z4", "Z5", "sans FC"]},
                 hover_data={"seance": True, "km": ":.1f"},
             )
             fig_wk.update_xaxes(categoryorder="array", categoryarray=day_labels)
@@ -1199,9 +1199,11 @@ with tab_vma:
     else:
         # --- vVMA estimée + évolution ---
         st.markdown("**Ta vVMA estimée**")
-        st.caption("Estimation d'entraînement : vitesse équivalente sur 3 000 m dérivée de ta "
-                   "meilleure perf des 8 dernières semaines (Riegel). Un vrai test de terrain "
-                   "(demi-Cooper : 6 min à fond) reste plus précis — l'estimation sert de tendance.")
+        st.caption("Estimation d'entraînement dérivée de tes meilleures perfs (séances continues "
+                   "ET fractions de VMA), **lissée par une contrainte physiologique** : la VMA "
+                   "évolue de quelques dixièmes de km/h par mois, jamais par bonds — les trous de "
+                   "données sont corrigés en conséquence. Un test de terrain (demi-Cooper : 6 min "
+                   "à fond) reste la référence.")
         vma_curve = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX, months=12)
         if vma_curve.empty:
             st.caption("Pas encore assez de séances ≥ 3 km pour estimer ta vVMA.")
@@ -1252,28 +1254,36 @@ with tab_vma:
 
             # --- Évolution séance par séance : plus haut = plus rapide ---
             st.markdown("**Évolution de tes séances de VMA**")
-            st.caption("Une barre par séance (vitesse moyenne des fractions, en km/h — plus haut "
-                       "= plus rapide). La température du jour est affichée au-dessus de chaque "
-                       "barre : elle explique souvent une séance en retrait.")
             vs_chron = vs.sort_values("date")
             speed_kmh = 3600 / vs_chron["allure_moy_s"]
-            temp_labels = ["" if pd.isna(t) else f"{t:.0f}°C" for t in vs_chron["temp_c"]]
+            # La moyenne est affichée ICI (hors graphique) : sur le graphique,
+            # l'étiquette se perdait sur les barres.
+            st.caption(f"Une barre par séance, en km/h (plus haut = plus rapide). Au-dessus de "
+                       f"chaque barre : température · nombre de répétitions · récupération. "
+                       f"La ligne pointillée = ta moyenne : "
+                       f"**{speed_kmh.mean():.1f} km/h** ({_p(3600 / speed_kmh.mean())}/km).")
+            bar_labels = []
+            for (_, r) in vs_chron.iterrows():
+                parts = []
+                if pd.notna(r["temp_c"]):
+                    parts.append(f"{r['temp_c']:.0f}°C")
+                parts.append(f"{int(r['nb_fractions'])}Rep")
+                if pd.notna(r.get("recup_s")) and r.get("recup_s"):
+                    parts.append(f"{int(round(r['recup_s']))}s")
+                bar_labels.append("<br>".join([parts[0], " · ".join(parts[1:])])
+                                  if len(parts) > 1 else parts[0])
             fig_ev = go.Figure()
             fig_ev.add_trace(go.Bar(
                 x=vs_chron["date"].dt.strftime("%d/%m"), y=speed_kmh,
                 marker_color="#E06666",
-                text=temp_labels, textposition="outside",
+                text=bar_labels, textposition="outside",
                 customdata=[_p(p) + "/km" for p in vs_chron["allure_moy_s"]],
                 hovertemplate="%{x} : %{y:.1f} km/h (%{customdata})<extra></extra>",
             ))
-            fig_ev.add_hline(y=speed_kmh.mean(), line_dash="dash", line_color="#22303F",
-                             annotation_text=f"moyenne {speed_kmh.mean():.1f} km/h",
-                             annotation_position="top left", annotation_yshift=12)
+            fig_ev.add_hline(y=speed_kmh.mean(), line_dash="dash", line_color="#22303F")
             ymin = max(speed_kmh.min() - 1.5, 0)
-            # Marge haute élargie pour que l'étiquette de moyenne ne chevauche
-            # pas les températures affichées au-dessus des barres.
             fig_ev.update_layout(yaxis_title="Vitesse fractions (km/h)", xaxis_title="",
-                                 yaxis=dict(range=[ymin, speed_kmh.max() + 2.2]))
+                                 yaxis=dict(range=[ymin, speed_kmh.max() + 2.6]))
             st.plotly_chart(mobile_friendly(fig_ev), width='stretch', config=PLOTLY_CONFIG)
 
             choix = st.selectbox(
@@ -1284,6 +1294,10 @@ with tab_vma:
             sel = vs.loc[choix]
             paces = sel["laps_paces"]
             frac_speed = [3600 / p for p in paces]
+            mean_speed = 3600 / sel["allure_moy_s"]
+            # Moyenne affichée hors graphique (l'étiquette se lisait mal sur les barres)
+            st.caption(f"Moyenne de la séance : **{mean_speed:.1f} km/h** "
+                       f"({_p(sel['allure_moy_s'])}/km) — la ligne pointillée sur le graphique.")
             fig_fr = go.Figure()
             fig_fr.add_trace(go.Bar(
                 x=[f"F{i+1}" for i in range(len(paces))],
@@ -1291,9 +1305,7 @@ with tab_vma:
                 hovertemplate="%{x} : %{y:.1f} km/h (%{customdata})<extra></extra>",
                 customdata=[_p(p) + "/km" for p in paces],
             ))
-            mean_speed = 3600 / sel["allure_moy_s"]
-            fig_fr.add_hline(y=mean_speed, line_dash="dash", line_color="#22303F",
-                             annotation_text=f"moyenne {mean_speed:.1f} km/h ({_p(sel['allure_moy_s'])}/km)")
+            fig_fr.add_hline(y=mean_speed, line_dash="dash", line_color="#22303F")
             fmin = max(min(frac_speed) - 1.5, 0)
             fig_fr.update_layout(yaxis_title="Vitesse (km/h) — plus haut = plus rapide",
                                  xaxis_title=f"Fractions du {sel['date'].strftime('%d/%m')}",

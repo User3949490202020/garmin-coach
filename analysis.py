@@ -778,12 +778,13 @@ def cadence_trend(activities_df: pd.DataFrame, months=6) -> pd.DataFrame:
 
 # Bornes des 5 zones en % de la réserve cardiaque (FCmax - FCrepos),
 # le découpage de référence chez les coureurs confirmés.
+# Dégradé de bleus : clair = facile, foncé = difficile (Z5 = le plus foncé).
 HR_ZONES_DEF = [
-    ("Z1", "Récupération", 0.50, 0.60, "#5B9BD5"),
-    ("Z2", "Endurance fondamentale", 0.60, 0.70, "#70AD47"),
-    ("Z3", "Tempo", 0.70, 0.80, "#FFC000"),
-    ("Z4", "Seuil", 0.80, 0.90, "#ED7D31"),
-    ("Z5", "VMA", 0.90, 1.00, "#C00000"),
+    ("Z1", "Récupération", 0.50, 0.60, "#A8CCEC"),
+    ("Z2", "Endurance fondamentale", 0.60, 0.70, "#6FA8DC"),
+    ("Z3", "Tempo", 0.70, 0.80, "#3D85C6"),
+    ("Z4", "Seuil", 0.80, 0.90, "#1C5A99"),
+    ("Z5", "VMA", 0.90, 1.00, "#0B3866"),
 ]
 
 
@@ -866,13 +867,27 @@ def vma_estimate_curve(activities_df: pd.DataFrame, laps_df: pd.DataFrame = None
         if not window.empty:
             best = window.loc[window["avg_pace_s_per_km"].idxmin()]
             pace_3k = best["avg_pace_s_per_km"] * (3 / best["distance_km"]) ** 0.06
-            candidates.append(3600 / pace_3k)
+            # La vitesse sur 3 000 m vaut ~94 % de la vVMA : on remonte de 6 %
+            # pour comparer le même objet que le signal "fractions".
+            candidates.append((3600 / pace_3k) * 1.06)
         if not frac.empty:
             fwin = frac[(frac["date"] <= ts) & (frac["date"] > ts - pd.Timedelta(weeks=8))]
             if not fwin.empty:
                 candidates.append(fwin["vma_kmh"].max())
         if candidates:
             points.append({"date": ts, "vma_kmh": max(candidates)})
+
+    # --- Garde-fou physiologique : la VMA évolue de ~0.3 km/h par MOIS, pas
+    # par bonds. Chaque estimation étant une borne basse (les semaines sans
+    # course ni fractionné sous-estiment), chaque point "relève" ses voisins
+    # dans un cône à ±0.15 km/h par quinzaine : si tu vaux 17 aujourd'hui, tu
+    # ne valais pas 13.5 il y a six semaines — la donnée manquait, c'est tout.
+    # La pente de la courbe est ainsi mathématiquement bornée au plausible.
+    if len(points) >= 2:
+        raw = [p["vma_kmh"] for p in points]
+        rate = 0.15  # km/h par pas de 14 jours
+        for t in range(len(raw)):
+            points[t]["vma_kmh"] = max(raw[s] - rate * abs(t - s) for s in range(len(raw)))
     return pd.DataFrame(points)
 
 
@@ -907,6 +922,15 @@ def vma_sessions(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
         if len(fast) < 3:
             continue
         paces = fast["avg_pace_s_per_km"].tolist()
+
+        # Récupération entre fractions : les tours lents INTERCALÉS entre la
+        # première et la dernière fraction (durée médiane, en secondes).
+        recup_s = None
+        first_fast, last_fast = fast["lap_index"].min(), fast["lap_index"].max()
+        between = lp[(lp["lap_index"] > first_fast) & (lp["lap_index"] < last_fast)
+                     & (~lp.index.isin(fast.index))]
+        if not between.empty and between["duration_s"].notna().any():
+            recup_s = float(between["duration_s"].median())
         rows.append({
             "date": a["date"], "name": a["name"], "activity_id": a["activity_id"],
             "nb_fractions": len(fast),
@@ -916,6 +940,7 @@ def vma_sessions(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
             "regularite_s": fast["avg_pace_s_per_km"].std(),
             "laps_paces": paces,
             "temp_c": a.get("temp_c") if "temp_c" in a.index else None,
+            "recup_s": recup_s,
         })
     return pd.DataFrame(rows).sort_values("date", ascending=False) if rows else pd.DataFrame()
 

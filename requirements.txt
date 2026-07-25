@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Onglet Bonus dissous dans VMA / Charge & Risque / Séances (7 onglets).
+# Zones en bleus, vVMA tempérée, Rep/récup sur les barres, moyennes hors graphique.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
