@@ -885,6 +885,58 @@ with tab_seances:
             fig_cad.update_layout(yaxis_title="Cadence (pas/min)", xaxis_title="")
             st.plotly_chart(mobile_friendly(fig_cad), width='stretch', config=PLOTLY_CONFIG)
 
+            # --- Fourchette de cadence personnalisée selon le gabarit ---
+            st.markdown("**🎯 Ta fourchette de cadence indicative**")
+            saved_taille = storage.read_manual_note("taille_cm", db_path=USER_DB_PATH)
+            saved_poids = storage.read_manual_note("poids_kg", db_path=USER_DB_PATH)
+            gc1, gc2 = st.columns(2)
+            taille_in = gc1.number_input("Ta taille (cm)", min_value=140, max_value=210,
+                                         value=int(saved_taille[0]) if saved_taille else None,
+                                         key="taille_cm_input")
+            poids_in = gc2.number_input("Ton poids (kg)", min_value=40, max_value=150,
+                                        value=int(saved_poids[0]) if saved_poids else None,
+                                        key="poids_kg_input")
+            if taille_in and (not saved_taille or int(saved_taille[0]) != taille_in):
+                storage.save_manual_note("taille_cm", float(taille_in), db_path=USER_DB_PATH)
+            if poids_in and (not saved_poids or int(saved_poids[0]) != poids_in):
+                storage.save_manual_note("poids_kg", float(poids_in), db_path=USER_DB_PATH)
+
+            if not taille_in or not poids_in:
+                st.caption("Renseigne ta taille et ton poids (mémorisés) pour obtenir une "
+                           "fourchette adaptée à ton gabarit.")
+            else:
+                # Heuristique de terrain : ~180 pas/min pour 1,70 m, ajustée de
+                # ±0,5 pas/min par cm (un grand gabarit a une foulée plus ample,
+                # donc une cadence naturellement plus basse).
+                centre = 180 - (taille_in - 170) * 0.5
+                lo, hi = centre - 4, centre + 4
+                imc = poids_in / (taille_in / 100) ** 2
+                reco = (f"Pour ton gabarit ({taille_in} cm, {poids_in} kg) : vise **{lo:.0f}-"
+                        f"{hi:.0f} pas/min**.")
+                if imc >= 25:
+                    reco += (" Privilégie plutôt le **haut de la fourchette** : à gabarit plus "
+                             "costaud, une cadence plus élevée raccourcit la foulée et réduit "
+                             "l'impact à chaque appui (moins de contrainte pour les articulations).")
+                cad_now = cad["cadence_lissee"].dropna()
+                if not cad_now.empty:
+                    actuelle = cad_now.iloc[-1]
+                    if actuelle < lo - 2:
+                        reco += (f" Ta tendance actuelle (**{actuelle:.0f}**) est en dessous : si tu "
+                                 "veux la remonter, fais-le très progressivement (+2-3 pas/min à la "
+                                 "fois, sur plusieurs semaines) — jamais d'un coup.")
+                    elif actuelle > hi + 2:
+                        reco += (f" Ta tendance actuelle (**{actuelle:.0f}**) est au-dessus — ce "
+                                 "n'est pas un problème en soi si tu ne ressens ni gêne ni fatigue "
+                                 "inhabituelle.")
+                    else:
+                        reco += f" Ta tendance actuelle (**{actuelle:.0f}**) est pile dedans. 👌"
+                st.info(reco)
+                st.caption("⚠️ **À prendre avec des pincettes** : c'est une heuristique de terrain "
+                           "basée sur ton seul gabarit. Ta biomécanique individuelle (longueur de "
+                           "jambes, historique, terrain) prime toujours — une cadence hors "
+                           "fourchette qui ne cause ni blessure ni inconfort n'a pas besoin "
+                           "d'être « corrigée ».")
+
 
 
 # ----------------------------------------------------------------------
