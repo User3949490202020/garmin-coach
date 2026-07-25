@@ -50,10 +50,20 @@ st.set_page_config(page_title="Coach Running Garmin", page_icon="🏃", layout="
 # 1 seule sur ordinateur — ça s'adapte tout seul à la largeur de l'écran).
 st.markdown("""
     <style>
-    div[data-baseweb="tab-list"] {
-        flex-wrap: wrap;
+    /* Streamlit >= 1.5x : la barre d'onglets est un div[role="tablist"]
+       (sélecteur standard d'accessibilité, stable entre versions). */
+    div[role="tablist"] {
+        flex-wrap: wrap !important;
         overflow-x: visible !important;
         row-gap: 0.25rem;
+    }
+    div[data-testid="stTab"] {
+        flex-shrink: 0 !important;
+    }
+    /* Anciennes versions de Streamlit (structure baseweb) — sans effet sinon. */
+    div[data-baseweb="tab-list"] {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
     }
     </style>
 """, unsafe_allow_html=True)
