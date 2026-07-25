@@ -918,3 +918,40 @@ def vma_sessions(activities_df: pd.DataFrame, laps_df: pd.DataFrame,
             "temp_c": a.get("temp_c") if "temp_c" in a.index else None,
         })
     return pd.DataFrame(rows).sort_values("date", ascending=False) if rows else pd.DataFrame()
+
+
+def vma_fraction_habits(vs_df: pd.DataFrame, n_sessions: int = 4, threshold_s: float = 8) -> dict | None:
+    """
+    Cherche les mauvaises habitudes récurrentes sur les `n_sessions` dernières
+    séances de VMA : pour chaque position de fraction (F1, F2, ...), l'écart
+    moyen à l'allure moyenne de la séance. Une position systématiquement
+    au-dessus du seuil = trop lente ; en dessous = trop rapide. La dernière
+    fraction est analysée à part (les séances n'ont pas toutes le même nombre
+    de fractions). Retourne None si pas assez de données.
+    """
+    if vs_df is None or vs_df.empty or len(vs_df) < 2:
+        return None
+    recent = vs_df.sort_values("date", ascending=False).head(n_sessions)
+    min_n = min(len(p) for p in recent["laps_paces"])
+    if min_n < 3:
+        return None
+
+    deltas = {}
+    last_deltas = []
+    for paces in recent["laps_paces"]:
+        m = sum(paces) / len(paces)
+        for i in range(min_n - 1):  # positions alignées (la dernière traitée à part)
+            deltas.setdefault(i, []).append(paces[i] - m)
+        last_deltas.append(paces[-1] - m)
+
+    avg = {i: sum(v) / len(v) for i, v in deltas.items()}
+    slow = [(i + 1, d) for i, d in avg.items() if d >= threshold_s]
+    fast = [(i + 1, d) for i, d in avg.items() if d <= -threshold_s]
+    avg_last = sum(last_deltas) / len(last_deltas)
+    return {
+        "nb_sessions": len(recent),
+        "slow": slow, "fast": fast,
+        "last_delta": avg_last,
+        "last_slow": avg_last >= threshold_s,
+        "last_fast": avg_last <= -threshold_s,
+    }

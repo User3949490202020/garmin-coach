@@ -647,28 +647,44 @@ with tab_strava:
                                   name="Moyenne 4 sem.", line=dict(color="orange", width=3)))
         st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
 
-        st.subheader("Répartition des séances par intensité")
-        st.caption(f"Chaque semaine : séances faciles (vert), moyennes (orange) et dures (rouge), "
-                   f"d'après ta FC rapportée à **ta FCmax ({HR_MAX} bpm** — réglable dans l'onglet "
-                   f"Bonus). Une VMA est reconnue « dure » même si sa FC moyenne est diluée par les "
-                   f"récupérations, grâce aux pics. Un bon équilibre = beaucoup de vert, du rouge "
-                   f"avec parcimonie.")
-        intens = analysis.session_intensity(activities, hr_max=HR_MAX)
-        intens_recent = intens[intens["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)].copy()
-        if not intens_recent.empty:
-            intens_recent["week_start"] = (intens_recent["date"] - pd.to_timedelta(
-                intens_recent["date"].dt.weekday, unit="D")).dt.normalize()
-            counts = (intens_recent.groupby(["week_start", "intensite"]).size()
-                      .reset_index(name="nb_seances"))
-            fig_int = px.bar(
-                counts, x="week_start", y="nb_seances", color="intensite",
-                color_discrete_map={"Facile": "seagreen", "Moyen": "orange",
-                                    "Dur": "crimson", "Non classée": "lightgray"},
-                category_orders={"intensite": ["Facile", "Moyen", "Dur", "Non classée"]},
+        st.subheader("Ta semaine, jour par jour")
+        st.caption("Du lundi au dimanche : les kilomètres de chaque séance, colorés selon ta zone "
+                   "cardiaque Z1-Z5 (Karvonen — les mêmes couleurs que « Tes 5 zones » dans Bonus).")
+        _today = pd.Timestamp.now().normalize()
+        _week_start = _today - pd.Timedelta(days=_today.weekday())
+        week_days = [_week_start + pd.Timedelta(days=i) for i in range(7)]
+        day_labels = [f"{['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'][i]} {d.strftime('%d/%m')}"
+                      for i, d in enumerate(week_days)]
+        week_acts = activities[(activities["date"] >= _week_start)
+                               & (activities["date"] < _week_start + pd.Timedelta(days=7))]
+        zone_colors = {z[0]: z[4] for z in analysis.HR_ZONES_DEF}
+        zone_colors["—"] = "lightgray"
+        rows_week = []
+        for _, a in week_acts.iterrows():
+            z = analysis.session_zone(a["avg_hr"], HR_MAX, HR_REST) or "—"
+            rows_week.append({"Jour": day_labels[int(a["date"].weekday())],
+                              "km": a["distance_km"], "Zone": z,
+                              "seance": a["name"]})
+        if not rows_week:
+            st.caption("Pas encore de séance cette semaine — les barres apparaîtront ici au fil "
+                       "de tes sorties.")
+        else:
+            # Jours sans séance : barre à zéro pour que les 7 jours s'affichent
+            _jours_courus = {r["Jour"] for r in rows_week}
+            for lbl in day_labels:
+                if lbl not in _jours_courus:
+                    rows_week.append({"Jour": lbl, "km": 0, "Zone": "—", "seance": ""})
+            week_df = pd.DataFrame(rows_week)
+            fig_wk = px.bar(
+                week_df, x="Jour", y="km", color="Zone",
+                color_discrete_map=zone_colors,
+                category_orders={"Jour": day_labels, "Zone": ["Z1", "Z2", "Z3", "Z4", "Z5", "—"]},
+                hover_data={"seance": True, "km": ":.1f"},
             )
-            fig_int.update_layout(barmode="stack", yaxis_title="Nb de séances",
-                                  xaxis_title="", legend_title_text="")
-            st.plotly_chart(mobile_friendly(fig_int), width='stretch', config=PLOTLY_CONFIG)
+            fig_wk.update_xaxes(categoryorder="array", categoryarray=day_labels)
+            fig_wk.update_layout(barmode="stack", yaxis_title="Kilomètres",
+                                 xaxis_title="", legend_title_text="")
+            st.plotly_chart(mobile_friendly(fig_wk), width='stretch', config=PLOTLY_CONFIG)
 
         st.subheader("Dénivelé par semaine")
         st.caption("Même principe pour le dénivelé positif cumulé chaque semaine (6 derniers mois).")
@@ -1162,7 +1178,7 @@ with tab_bonus:
         st.caption("La cadence (pas/minute) est un marqueur de technique : une dérive vers le bas "
                    "accompagne souvent la fatigue ou une foulée qui se dégrade. On ne vise pas "
                    "180 à tout prix — on surveille **ta** tendance.")
-        cad = analysis.cadence_trend(activities)
+        cad = analysis.cadence_trend(activities, months=12)
         if cad.empty:
             st.caption("Pas de données de cadence sur la période.")
         else:
@@ -1188,7 +1204,7 @@ with tab_vma:
         st.caption("Estimation d'entraînement : vitesse équivalente sur 3 000 m dérivée de ta "
                    "meilleure perf des 8 dernières semaines (Riegel). Un vrai test de terrain "
                    "(demi-Cooper : 6 min à fond) reste plus précis — l'estimation sert de tendance.")
-        vma_curve = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX)
+        vma_curve = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX, months=12)
         if vma_curve.empty:
             st.caption("Pas encore assez de séances ≥ 3 km pour estimer ta vVMA.")
         else:
@@ -1253,10 +1269,13 @@ with tab_vma:
                 hovertemplate="%{x} : %{y:.1f} km/h (%{customdata})<extra></extra>",
             ))
             fig_ev.add_hline(y=speed_kmh.mean(), line_dash="dash", line_color="#22303F",
-                             annotation_text=f"moyenne {speed_kmh.mean():.1f} km/h")
+                             annotation_text=f"moyenne {speed_kmh.mean():.1f} km/h",
+                             annotation_position="top left", annotation_yshift=12)
             ymin = max(speed_kmh.min() - 1.5, 0)
+            # Marge haute élargie pour que l'étiquette de moyenne ne chevauche
+            # pas les températures affichées au-dessus des barres.
             fig_ev.update_layout(yaxis_title="Vitesse fractions (km/h)", xaxis_title="",
-                                 yaxis=dict(range=[ymin, speed_kmh.max() + 1.5]))
+                                 yaxis=dict(range=[ymin, speed_kmh.max() + 2.2]))
             st.plotly_chart(mobile_friendly(fig_ev), width='stretch', config=PLOTLY_CONFIG)
 
             choix = st.selectbox(
@@ -1288,6 +1307,32 @@ with tab_vma:
             elif pd.notna(sel["regularite_s"]) and sel["regularite_s"] > 15:
                 st.warning(f"🟠 Fractions irrégulières (± {sel['regularite_s']:.0f} s) : pars "
                            "moins vite sur les premières, l'objectif est de tenir la MÊME allure.")
+
+            # --- Tes habitudes sur les dernières séances de VMA ---
+            habits = analysis.vma_fraction_habits(vs)
+            if habits:
+                constats = []
+                for pos, d in sorted(habits["fast"]):
+                    constats.append(f"la **F{pos}** part trop vite ({abs(d):.0f} s plus rapide "
+                                    "que ta moyenne de séance)")
+                for pos, d in sorted(habits["slow"]):
+                    constats.append(f"la **F{pos}** est souvent trop lente (+{d:.0f} s)")
+                if habits["last_fast"]:
+                    constats.append(f"la **dernière** est trop rapide "
+                                    f"({abs(habits['last_delta']):.0f} s de mieux — signe qu'il "
+                                    "te restait trop de jus)")
+                elif habits["last_slow"]:
+                    constats.append(f"la **dernière** s'écroule (+{habits['last_delta']:.0f} s)")
+                if constats:
+                    st.info(f"🔍 **Ton habitude sur les {habits['nb_sessions']} dernières VMA** : "
+                            + ", ".join(constats) + ". La prochaine fois, vise la même allure de la "
+                            "première à la dernière fraction : retiens-toi quand ça part vite, et "
+                            "garde de la lucidité sur celles que tu laisses filer — c'est "
+                            "l'homogénéité qui fait progresser, pas la meilleure fraction.")
+                else:
+                    st.success(f"🟢 **Sur tes {habits['nb_sessions']} dernières VMA**, aucune "
+                               "mauvaise habitude récurrente : tes fractions sont homogènes d'une "
+                               "séance à l'autre. Exactement ce qu'on veut.")
 
 # ----------------------------------------------------------------------
 # Chaussures — parc, usure, records par paire

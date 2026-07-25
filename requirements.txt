@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Correctif estimation vVMA : intègre la vitesse des fractions.
+# Semaine en zones Z1-Z5, cadence/VMA sur 1 an, habitudes de fractions.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26
