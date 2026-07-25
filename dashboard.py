@@ -75,84 +75,78 @@ st.title("🏃 Ton Coach Running")
 st.caption("**L'entraînement au cordeau.** Tes séances, ton sommeil, ta charge — analysés "
            "finement, conseillés sur mesure. Directement depuis ta montre.")
 
-with st.sidebar:
-    if LOCAL_MODE:
-        active_source = "garmin"
-        garmin_email = ENV_EMAIL
-        garmin_password = ENV_PASSWORD
-        own_gemini_key = None
-        USER_DB_PATH = None  # base par défaut, mode local
-        storage.init_db(db_path=USER_DB_PATH)
-    else:
-        # Mode hébergé multi-utilisateurs : chacun se connecte avec SA source
-        # (Garmin directement, ou Strava pour Suunto et les autres marques).
-        st.header("Connexion")
-
-        # --- Reconnexion automatique via le jeton de session dans l'URL ---
-        # Streamlit perd la mémoire de session à chaque coupure (onglet
-        # inactif, téléphone verrouillé...). Le jeton aléatoire "s" dans l'URL
-        # permet de retrouver QUI était connecté sans redemander les
-        # identifiants. Le mot de passe n'est jamais stocké : la session
-        # Garmin en cache (token_store) suffit pour resynchroniser.
-        if ("garmin_email" not in st.session_state
-                and "strava_tokens" not in st.session_state
-                and "code" not in st.query_params):
-            _sess = storage.read_session_token(st.query_params.get("s"))
-            if _sess:
-                _src, _ident = _sess
-                if _src == "garmin":
-                    st.session_state.garmin_email = _ident
-                    st.session_state.garmin_password = None  # session Garmin en cache
-                    st.session_state.active_source = "garmin"
-                else:
-                    _db = storage.get_db_path_for_user(f"strava-{_ident}")
-                    storage.init_db(db_path=_db)
-                    _tok = storage.read_strava_tokens(db_path=_db)
-                    if _tok:
-                        st.session_state.strava_tokens = _tok
-                        st.session_state.active_source = "strava"
-
-        # --- Retour de l'autorisation Strava (Strava renvoie sur ?code=...) ---
-        if (STRAVA_CONFIGURED and "code" in st.query_params
-                and "strava_tokens" not in st.session_state):
-            with st.spinner("Connexion à Strava..."):
-                try:
-                    _tok = strava.exchange_code(
-                        STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, st.query_params["code"])
-                    _db = storage.get_db_path_for_user(f"strava-{_tok['athlete_id']}")
-                    storage.init_db(db_path=_db)
-                    storage.save_strava_tokens(_tok, db_path=_db)
+# ----------------------------------------------------------------------
+# Connexion — affichée en PLEINE PAGE tant qu'on n'est pas connecté :
+# sur smartphone, la barre latérale est repliée derrière une petite flèche
+# que personne ne voit. Une fois connecté, elle n'accueille plus que le
+# statut et la synchronisation.
+# ----------------------------------------------------------------------
+if not LOCAL_MODE:
+    # --- Reconnexion automatique via le jeton de session dans l'URL ---
+    # Streamlit perd la mémoire de session à chaque coupure (onglet
+    # inactif, téléphone verrouillé...). Le jeton aléatoire "s" dans l'URL
+    # permet de retrouver QUI était connecté sans redemander les
+    # identifiants. Le mot de passe n'est jamais stocké : la session
+    # Garmin en cache (token_store) suffit pour resynchroniser.
+    if ("garmin_email" not in st.session_state
+            and "strava_tokens" not in st.session_state
+            and "code" not in st.query_params):
+        _sess = storage.read_session_token(st.query_params.get("s"))
+        if _sess:
+            _src, _ident = _sess
+            if _src == "garmin":
+                st.session_state.garmin_email = _ident
+                st.session_state.garmin_password = None  # session Garmin en cache
+                st.session_state.active_source = "garmin"
+            else:
+                _db = storage.get_db_path_for_user(f"strava-{_ident}")
+                storage.init_db(db_path=_db)
+                _tok = storage.read_strava_tokens(db_path=_db)
+                if _tok:
                     st.session_state.strava_tokens = _tok
                     st.session_state.active_source = "strava"
-                    st.session_state.pop("strava_error", None)
-                    # Jeton de reconnexion automatique (la synchro auto à
-                    # l'ouverture prend le relais après le rerun)
-                    st.session_state.reconnect_token = storage.create_session_token(
-                        "strava", _tok["athlete_id"])
-                except Exception as e:
-                    # On mémorise l'erreur pour l'afficher après le rerun, et on
-                    # purge le `code` de l'URL : un code d'autorisation n'est
-                    # utilisable qu'une fois, inutile de retenter en boucle.
-                    st.session_state.strava_error = str(e)
-            # Toujours nettoyer l'URL puis relancer (succès comme échec).
-            st.query_params.clear()
-            if st.session_state.get("reconnect_token"):
-                st.query_params["s"] = st.session_state.reconnect_token
-            st.rerun()
 
-        # Erreur de connexion Strava mémorisée lors d'un précédent essai.
-        if st.session_state.get("strava_error"):
-            st.error(f"Échec de la connexion Strava : {st.session_state.pop('strava_error')}")
+    # --- Retour de l'autorisation Strava (Strava renvoie sur ?code=...) ---
+    if (STRAVA_CONFIGURED and "code" in st.query_params
+            and "strava_tokens" not in st.session_state):
+        with st.spinner("Connexion à Strava..."):
+            try:
+                _tok = strava.exchange_code(
+                    STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, st.query_params["code"])
+                _db = storage.get_db_path_for_user(f"strava-{_tok['athlete_id']}")
+                storage.init_db(db_path=_db)
+                storage.save_strava_tokens(_tok, db_path=_db)
+                st.session_state.strava_tokens = _tok
+                st.session_state.active_source = "strava"
+                st.session_state.pop("strava_error", None)
+                # Jeton de reconnexion automatique (la synchro auto à
+                # l'ouverture prend le relais après le rerun)
+                st.session_state.reconnect_token = storage.create_session_token(
+                    "strava", _tok["athlete_id"])
+            except Exception as e:
+                # On mémorise l'erreur pour l'afficher après le rerun, et on
+                # purge le `code` de l'URL : un code d'autorisation n'est
+                # utilisable qu'une fois, inutile de retenter en boucle.
+                st.session_state.strava_error = str(e)
+        # Toujours nettoyer l'URL puis relancer (succès comme échec).
+        st.query_params.clear()
+        if st.session_state.get("reconnect_token"):
+            st.query_params["s"] = st.session_state.reconnect_token
+        st.rerun()
 
-        connected_garmin = "garmin_email" in st.session_state
-        connected_strava = "strava_tokens" in st.session_state
+    # Erreur de connexion Strava mémorisée lors d'un précédent essai.
+    if st.session_state.get("strava_error"):
+        st.error(f"Échec de la connexion Strava : {st.session_state.pop('strava_error')}")
 
-        # --- Aucune source connectée : proposer le choix Garmin / Strava ---
-        if not connected_garmin and not connected_strava:
-            if st.session_state.pop("session_expired_msg", False):
-                st.warning("Ta session Garmin a expiré — ressaisis ton mot de passe pour te "
-                           "reconnecter. Tes données, ton objectif et ton historique de "
-                           "conversation sont conservés.")
+    # --- Aucune source connectée : écran de connexion en pleine page ---
+    if "garmin_email" not in st.session_state and "strava_tokens" not in st.session_state:
+        st.header("Connexion")
+        if st.session_state.pop("session_expired_msg", False):
+            st.warning("Ta session Garmin a expiré — ressaisis ton mot de passe pour te "
+                       "reconnecter. Tes données, ton objectif et ton historique de "
+                       "conversation sont conservés.")
+        login_col, _ = st.columns([2, 1])
+        with login_col:
             src_g, src_s = st.tabs(["⌚ Garmin", "🔶 Strava (Suunto & autres)"])
             with src_g:
                 st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ton mot de passe "
@@ -161,7 +155,7 @@ with st.sidebar:
                 with st.form("garmin_login"):
                     email_input = st.text_input("Email Garmin Connect")
                     password_input = st.text_input("Mot de passe Garmin Connect", type="password")
-                    submitted = st.form_submit_button("Se connecter")
+                    submitted = st.form_submit_button("Se connecter", width='stretch')
                 if submitted:
                     if email_input and password_input:
                         st.session_state.garmin_email = email_input
@@ -185,9 +179,20 @@ with st.sidebar:
                         "🔶 Se connecter avec Strava",
                         strava.build_authorize_url(STRAVA_CLIENT_ID, STRAVA_REDIRECT_URI),
                     )
-            st.stop()
+        st.stop()
 
-        # --- Une source est connectée ---
+with st.sidebar:
+    if LOCAL_MODE:
+        active_source = "garmin"
+        garmin_email = ENV_EMAIL
+        garmin_password = ENV_PASSWORD
+        own_gemini_key = None
+        USER_DB_PATH = None  # base par défaut, mode local
+        storage.init_db(db_path=USER_DB_PATH)
+    else:
+        # Arrivé ici, une source est forcément connectée (sinon st.stop()
+        # ci-dessus). La barre latérale n'affiche plus que statut + synchro.
+        st.header("Connexion")
         active_source = st.session_state.get(
             "active_source", "strava" if connected_strava else "garmin")
         garmin_email = st.session_state.get("garmin_email")
