@@ -404,12 +404,29 @@ with tab_coach:
                "en s'appuyant sur tes vraies données, pas sur des généralités.")
 
     # --- Objectif persistant : le coach le connaît sans que tu le répètes ---
+    # Conservé 45 jours (1,5 mois) : au-delà il reste actif mais l'appli — et
+    # le coach — suggèrent de le rafraîchir. Modifiable à tout moment.
+    OBJECTIF_VALIDITE_JOURS = 45
     saved_obj = storage.read_text_note("objectif", db_path=USER_DB_PATH)
+    obj_age_days = None
+    if saved_obj:
+        obj_age_days = (pd.Timestamp.now().normalize()
+                        - pd.to_datetime(saved_obj[1])).days
     with st.expander("🎯 Mon objectif du moment"
                      + (f" — défini le {pd.to_datetime(saved_obj[1]).strftime('%d/%m/%Y')}" if saved_obj else ""),
                      expanded=not saved_obj):
         st.caption("Écris ton objectif ici une fois : le coach en tiendra compte dans **toutes** ses "
                    "réponses, sans que tu aies à le répéter à chaque message.")
+        if saved_obj and obj_age_days is not None:
+            fin_validite = (pd.to_datetime(saved_obj[1])
+                            + pd.Timedelta(days=OBJECTIF_VALIDITE_JOURS))
+            if obj_age_days > OBJECTIF_VALIDITE_JOURS:
+                st.warning(f"⏳ Ton objectif date de plus de 1,5 mois ({obj_age_days} jours). "
+                           "Toujours d'actualité ? Mets-le à jour — ou réenregistre-le tel quel "
+                           "pour repartir pour 1,5 mois.")
+            else:
+                st.caption(f"✅ Objectif actif — conservé jusqu'au "
+                           f"{fin_validite.strftime('%d/%m/%Y')} (et modifiable à tout moment).")
         obj_text = st.text_area(
             "Ton objectif", value=saved_obj[0] if saved_obj else "",
             placeholder="Ex : « Atteindre 70 km/semaine d'ici 3 semaines » — ou « Courir un 10 km "

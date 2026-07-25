@@ -53,7 +53,11 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
         lines.append("### 🎯 OBJECTIF ACTUEL DE L'ATHLÈTE (à garder en tête dans CHAQUE réponse)")
         lines.append(f"{obj_text}")
         if obj_date:
-            lines.append(f"(défini le {obj_date})")
+            age_days = (pd.Timestamp.now().normalize() - pd.to_datetime(obj_date)).days
+            lines.append(f"(défini le {obj_date}, il y a {age_days} jours)")
+            if age_days > 45:
+                lines.append("⚠️ Cet objectif a plus de 1,5 mois : profite d'une réponse pour "
+                             "demander gentiment à l'athlète s'il est toujours d'actualité.")
         lines.append("Oriente systématiquement tes conseils vers cet objectif, sans que "
                      "l'athlète ait besoin de le rappeler.")
 
