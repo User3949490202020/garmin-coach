@@ -6,6 +6,11 @@ fichier toi-même. Pour voir la liste : **« montre-moi la boîte à idées »**
 
 ## 🆕 En attente
 
+- **Nutrition course (idée de Maxime)** : calculateur de glucides/heure selon
+  durée × intensité de la sortie + carnet de produits testés (marque, note,
+  toléré/pas toléré) lisible par le coach IA. Reporté après le lot zones
+  FC / VMA / chaussures (livré le 25/07/2026).
+
 - **Compatibilité montres Suunto** : faire évoluer l'appli pour supporter les
   montres Suunto en plus de Garmin (aujourd'hui 100% dépendant de la
   librairie `garminconnect`, spécifique à Garmin — à voir s'il existe un
