@@ -448,10 +448,11 @@ with tab_coach:
                    "(c'est gratuit, aucune carte bancaire requise).")
     else:
         if "chat_display_history" not in st.session_state:
-            # Reprend la conversation des 12 dernières heures (persistée en
+            # Reprend la conversation des 48 dernières heures (persistée en
             # base par utilisateur) : une coupure de session ne l'efface plus.
+            # Le bouton "Effacer la conversation" reste le seul moyen de purger.
             st.session_state.chat_display_history = storage.read_chat_history(
-                hours=12, db_path=USER_DB_PATH)
+                hours=48, db_path=USER_DB_PATH)
 
         weekly_ctx = analysis.weekly_stats(activities) if not activities.empty else pd.DataFrame()
         records_ctx = analysis.personal_records(activities) if not activities.empty else {}
