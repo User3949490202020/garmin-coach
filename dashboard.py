@@ -674,7 +674,13 @@ with tab_strava:
             _jours_courus = {r["Jour"] for r in rows_week}
             for lbl in day_labels:
                 if lbl not in _jours_courus:
-                    rows_week.append({"Jour": lbl, "km": 0, "Zone": "sans FC", "seance": ""})
+                    rows_week.append({"Jour": lbl, "km": 0, "Zone": "Z1", "seance": ""})
+            # Zones absentes cette semaine : ligne fantôme (0 km) pour que la
+            # légende affiche TOUJOURS les 5 zones, de Z1 à Z5.
+            _zones_presentes = {r["Zone"] for r in rows_week}
+            for _z in ["Z1", "Z2", "Z3", "Z4", "Z5"]:
+                if _z not in _zones_presentes:
+                    rows_week.append({"Jour": day_labels[0], "km": 0, "Zone": _z, "seance": ""})
             week_df = pd.DataFrame(rows_week)
             fig_wk = px.bar(
                 week_df, x="Jour", y="km", color="Zone",
