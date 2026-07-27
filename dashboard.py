@@ -1030,15 +1030,18 @@ with tab_seances:
                    "la vitesse. Ventilée par intensité, elle devient parlante : **des pas trop "
                    "grands à allure facile** (foulée longue + cadence basse) = sur-foulée, le "
                    "défaut technique qui freine à chaque appui et augmente les chocs.")
+        # La foulée "VMA" n'est volontairement PAS affichée : la moyenne d'une
+        # séance de fractionné est diluée par les récupérations et Garmin ne
+        # fournit pas la cadence tour par tour — donnée non fiable, donc absente.
         strides = analysis.stride_by_intensity(activities, hr_max=HR_MAX)
+        strides = strides[strides["intensite"].isin(["Facile", "Moyen"])] if not strides.empty else strides
         if strides.empty:
             st.caption("Pas assez de séances avec cadence et FC sur la période.")
         else:
-            labels_stride = {"Facile": "🟢 Endurance fondamentale", "Moyen": "🟠 Seuil / tempo",
-                             "Dur": "🔴 VMA*"}
-            scols = st.columns(len(strides))
+            labels_stride = {"Facile": "🟢 Endurance fondamentale", "Moyen": "🟠 Seuil / tempo"}
+            scols = st.columns(max(len(strides), 2))
             for col, (_, r) in zip(scols, strides.set_index("intensite")
-                                   .reindex(["Facile", "Moyen", "Dur"]).dropna().reset_index().iterrows()):
+                                   .reindex(["Facile", "Moyen"]).dropna().reset_index().iterrows()):
                 col.metric(labels_stride[r["intensite"]], f"{r['foulee_m']:.2f} m",
                            help=f"Cadence moyenne {r['cadence']:.0f} pas/min, "
                                 f"{int(r['nb'])} séance(s)")
@@ -1054,8 +1057,6 @@ with tab_seances:
                 else:
                     st.success(f"🟢 En endurance fondamentale, ta foulée ({f_row.iloc[0]['foulee_m']:.2f} m, "
                                f"soit {ratio:.0%} de ta taille) est dans une plage saine.")
-            st.caption("*La foulée « VMA » est sous-estimée : la moyenne de la séance inclut les "
-                       "trots de récupération entre fractions. À lire en tendance, pas en absolu.")
 
 
 
