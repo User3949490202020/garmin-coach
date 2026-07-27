@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Longueur de foulée par type de séance (détecteur de sur-foulée).
+# Autres sports listés dans Séances + consigne yoga explicite.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

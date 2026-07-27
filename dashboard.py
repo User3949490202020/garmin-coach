@@ -744,9 +744,11 @@ with tab_strava:
                 col.metric(key, preds[key]["temps_str"])
 
         st.subheader("💪 Renfo & étirements par semaine")
-        st.caption("Objectif : **2 séances de musculation** et **2 séances d'étirements** (yoga sur "
-                   "ta montre) par semaine — la ligne pointillée marque l'objectif. Données tirées "
-                   "directement de ta montre Garmin.")
+        st.caption("Objectif : **2 séances de musculation** et **2 séances d'étirements** par "
+                   "semaine — la ligne pointillée marque l'objectif. "
+                   "⚠️ **Important : pour que tes étirements soient comptés ici, enregistre-les "
+                   "avec le profil « Yoga » de ta montre** (n'importe quel autre profil les fera "
+                   "passer pour de l'entraînement, avec de la charge en plus).")
         if cross_training.empty:
             st.caption("Aucune séance de renfo/étirements synchronisée pour l'instant — resynchronise "
                        "pour récupérer aussi tes séances de yoga.")
@@ -815,6 +817,36 @@ with tab_seances:
         st.dataframe(display_df[[c for c in cols_to_show if c in display_df.columns]], width='stretch')
         st.caption("La météo n'est récupérée automatiquement que pour les 15 séances les plus récentes "
                    "à chaque synchronisation (pour ne pas ralentir la sync).")
+
+        # --- Les autres sports (tout ce qui n'est pas de la course) ---
+        st.subheader("🤸 Tes autres séances")
+        st.caption("Renfo, crossfit, vélo, yoga... Elles comptent dans ta charge et ta fatigue "
+                   "(onglet Charge & Risque), pas dans tes stats de course. "
+                   "⚠️ **Pour tes étirements, enregistre bien la séance avec le profil « Yoga » "
+                   "sur ta montre** : c'est comme ça qu'elle est reconnue comme récupération "
+                   "(sans peser sur la charge) et comptée dans ton objectif étirements.")
+        if cross_training.empty:
+            st.caption("Aucune autre séance synchronisée pour l'instant — resynchronise pour "
+                       "récupérer tous tes sports.")
+        else:
+            autres = cross_training.copy()
+            autres["date"] = pd.to_datetime(autres["date"])
+            autres = autres[autres["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)]
+            autres = autres.sort_values("date", ascending=False)
+            if autres.empty:
+                st.caption("Aucune autre séance sur les 6 derniers mois.")
+            else:
+                autres_df = pd.DataFrame({
+                    "date": autres["date"].dt.strftime("%d/%m/%Y"),
+                    "jour": autres["date"].apply(
+                        lambda d: coach_agent.FR_WEEKDAYS[d.weekday()].capitalize()),
+                    "sport": autres["sport"].apply(analysis.sport_label),
+                    "séance": autres["name"],
+                    "durée": (autres["duration_s"].fillna(0) / 60).round(0).astype(int).astype(str) + " min",
+                    "FC moy": autres["avg_hr"].apply(
+                        lambda h: f"{h:.0f}" if pd.notna(h) else "—"),
+                })
+                st.dataframe(autres_df, hide_index=True, width='stretch')
 
         st.subheader("🌡️ Indice de forme ajusté à la météo")
         adj = analysis.weather_adjusted_pace(activities)

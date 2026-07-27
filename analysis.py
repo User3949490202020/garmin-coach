@@ -1142,3 +1142,29 @@ def stride_by_intensity(activities_df: pd.DataFrame, hr_max: int = 190,
                 nb=("stride_m", "size"))
            .reset_index())
     return out[out["intensite"].isin(["Facile", "Moyen", "Dur"])]
+
+
+SPORT_LABELS = [
+    ("strength", "💪 Renfo / Muscu"),
+    ("yoga", "🧘 Yoga (étirements)"),
+    ("stretch", "🧘 Étirements"),
+    ("cycling", "🚴 Vélo"),
+    ("biking", "🚴 Vélo"),
+    ("swim", "🏊 Natation"),
+    ("hiking", "🥾 Rando"),
+    ("walking", "🚶 Marche"),
+    ("hiit", "🔥 HIIT"),
+    ("cardio", "🔥 Cardio"),
+    ("crossfit", "🔥 CrossFit"),
+    ("ski", "⛷️ Ski"),
+    ("row", "🚣 Rameur"),
+]
+
+
+def sport_label(type_key: str) -> str:
+    """Libellé lisible pour un typeKey Garmin/Strava de sport croisé."""
+    tk = str(type_key or "").lower()
+    for needle, label in SPORT_LABELS:
+        if needle in tk:
+            return label
+    return "🤸 " + tk.replace("_", " ").capitalize() if tk else "🤸 Autre"
