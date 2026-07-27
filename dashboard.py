@@ -173,7 +173,7 @@ if not LOCAL_MODE:
                        "conversation sont conservés.")
         login_col, _ = st.columns([2, 1])
         with login_col:
-            src_g, src_s = st.tabs(["⌚ Garmin", "🔶 Strava (Suunto & autres)"])
+            src_g, src_s = st.tabs(["⌚ Garmin", "🔍 Mode découverte"])
             with src_g:
                 st.caption("Connecte-toi avec tes identifiants Garmin Connect. Ton mot de passe "
                            "n'est jamais enregistré sur le serveur ; ton email est associé à un "
@@ -196,8 +196,11 @@ if not LOCAL_MODE:
                     else:
                         st.error("Renseigne ton email et ton mot de passe Garmin.")
             with src_s:
-                st.caption("Pour les montres **Suunto**, Coros, Polar… synchronisées vers Strava. "
-                           "⚠️ La récupération (sommeil, HRV, FC repos) n'est **pas** disponible via Strava.")
+                st.caption("**L'expérience complète d'Allure est pensée pour Garmin.** Pas de "
+                           "Garmin ? Le mode découverte te donne un aperçu via ton compte Strava "
+                           "(toutes marques de montres) : analyse de tes séances et coach IA — "
+                           "mais **sans les données de santé** (sommeil, HRV, récupération), le "
+                           "cœur de l'appli.")
                 if not STRAVA_CONFIGURED:
                     st.info("La connexion Strava n'est pas encore configurée par l'administrateur de l'appli.")
                 else:
@@ -232,7 +235,9 @@ with st.sidebar:
             _tok = st.session_state.strava_tokens
             USER_DB_PATH = storage.get_db_path_for_user(f"strava-{_tok['athlete_id']}")
             storage.init_db(db_path=USER_DB_PATH)
-            st.success(f"Connecté via Strava (athlète {_tok.get('athlete_id')})")
+            st.success(f"🔍 Mode découverte (Strava) — athlète {_tok.get('athlete_id')}")
+            st.caption("Aperçu sans données de santé : connecte une Garmin pour "
+                       "l'expérience complète (récupération, brief santé, sommeil).")
         else:
             USER_DB_PATH = storage.get_db_path_for_user(garmin_email)
             storage.init_db(db_path=USER_DB_PATH)
