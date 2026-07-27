@@ -144,21 +144,28 @@ class GarminClient:
     def _type_key(a):
         return (a.get("activityType", {}) or {}).get("typeKey", "") or ""
 
+    @staticmethod
+    def _is_run(type_key: str) -> bool:
+        # Couvre running, trail_running, treadmill_running... ET ultra_run
+        # (le mode "ultrafond" Garmin, qui ne contient pas le mot "running").
+        return any(k in type_key for k in ("running", "ultra"))
+
     def get_running_activities_since(self, months=6, max_activities=400, page_size=50):
-        """Séances de course (course à pied) des `months` derniers mois."""
+        """Séances de course à pied (route, trail, ultrafond) des `months` derniers mois."""
         return self._activities_since(
-            lambda a: "running" in self._type_key(a),
+            lambda a: self._is_run(self._type_key(a)),
             months=months, max_activities=max_activities, page_size=page_size,
         )
 
     def get_cross_training_since(self, months=6, max_activities=400, page_size=50):
         """
-        Séances de renforcement / musculation ET de yoga/étirements des
-        `months` derniers mois. Garmin nomme ça `strength_training` (ou
-        `functional_strength_training`) et `yoga`.
+        TOUTES les activités hors course à pied des `months` derniers mois
+        (musculation, crossfit, HIIT, vélo, natation, yoga, marche...) : elles
+        pèsent sur la charge et la fatigue, même si elles ne sont pas de la
+        course.
         """
         return self._activities_since(
-            lambda a: any(k in self._type_key(a) for k in ("strength", "yoga")),
+            lambda a: self._type_key(a) and not self._is_run(self._type_key(a)),
             months=months, max_activities=max_activities, page_size=page_size,
         )
 

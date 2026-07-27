@@ -457,9 +457,9 @@ HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
 # Karvonen (Z1-Z5 en % de réserve cardiaque). Sans données (Strava), défaut 55.
 HR_REST = analysis.current_rest_hr(wellness)
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_shoes = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_sante = st.tabs(
     ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
-     "📈 Charge & Risque", "🚀 VMA", "👟 Chaussures"]
+     "📈 Charge & Risque", "🚀 VMA", "🩺 Santé"]
 )
 
 # ----------------------------------------------------------------------
@@ -755,8 +755,17 @@ with tab_strava:
             ct["date"] = pd.to_datetime(ct["date"])
             ct = ct[ct["date"] >= pd.Timestamp.now() - pd.DateOffset(months=6)]
             if not ct.empty:
-                ct["categorie"] = ct["sport"].astype(str).str.contains("yoga", case=False).map(
-                    {True: "Étirements", False: "Musculation"})
+                # La table contient désormais TOUS les sports croisés (vélo,
+                # natation, crossfit...) : ce graphique ne suit que le duo
+                # renfo/étirements — les autres comptent dans la charge.
+                sport = ct["sport"].astype(str)
+                ct["categorie"] = None
+                ct.loc[sport.str.contains("yoga|stretch", case=False, na=False),
+                       "categorie"] = "Étirements"
+                ct.loc[sport.str.contains("strength|crossfit|hiit|training", case=False, na=False)
+                       & ct["categorie"].isna(), "categorie"] = "Musculation"
+                ct = ct.dropna(subset=["categorie"])
+            if not ct.empty:
                 ct["week_start"] = (ct["date"] - pd.to_timedelta(ct["date"].dt.weekday, unit="D")).dt.normalize()
                 ct_counts = ct.groupby(["week_start", "categorie"]).size().reset_index(name="nb")
                 fig_ct = px.bar(
@@ -1403,100 +1412,92 @@ with tab_vma:
                                "séance à l'autre. Exactement ce qu'on veut.")
 
 # ----------------------------------------------------------------------
-# Chaussures — parc, usure, records par paire
+# Santé — sommeil par phases, stress, conseils personnalisés
 # ----------------------------------------------------------------------
-with tab_shoes:
-    st.subheader("👟 Ton parc de chaussures")
-    shoes_df = storage.read_df("shoes", db_path=USER_DB_PATH)
-    assign_df = storage.read_df("activity_shoes", db_path=USER_DB_PATH)
+with tab_sante:
+    st.subheader("🩺 Ta santé de sportif")
 
-    with st.expander("➕ Ajouter une paire", expanded=shoes_df.empty):
-        with st.form("add_shoe"):
-            sc1, sc2, sc3 = st.columns([2, 2, 1])
-            shoe_name = sc1.text_input("Modèle", placeholder="Ex : Pegasus 41")
-            shoe_brand = sc2.text_input("Marque", placeholder="Ex : Nike")
-            shoe_target = sc3.number_input("Durée de vie (km)", 300, 1500, 700, step=50)
-            if st.form_submit_button("Ajouter") and shoe_name.strip():
-                storage.add_shoe(shoe_name.strip(), shoe_brand.strip(), shoe_target,
-                                 db_path=USER_DB_PATH)
-                st.rerun()
+    # --- Conseils personnalisés (croisement données ↔ entraînement) ---
+    st.markdown("**💡 Tes conseils du moment**")
+    st.caption("Générés en croisant tes marqueurs (HRV, sommeil, stress) avec ton entraînement "
+               "réel — course ET sports croisés (crossfit, vélo, renfo...).")
+    tips = analysis.health_insights(wellness, sleep, activities, cross_training, hr_max=HR_MAX)
+    for t in tips:
+        {"ok": st.success, "info": st.info, "alerte": st.warning}[t["niveau"]](t["texte"])
 
-    if shoes_df.empty:
-        st.info("Ajoute ta première paire ci-dessus, puis assigne tes séances : kilométrage, "
-                "usure et records par paire apparaîtront ici.")
+    if os.getenv("GEMINI_API_KEY"):
+        if st.button("🧠 Analyse approfondie par le coach IA (HRV, sommeil, récupération)"):
+            with st.spinner("Le coach analyse tes 60 derniers jours..."):
+                try:
+                    ctx_sante = coach_agent.build_context_summary(
+                        activities, wellness, pd.DataFrame(), {}, None, None, laps,
+                        sleep=sleep, cross_training=cross_training,
+                    )
+                    st.session_state.sante_advice = coach_agent.one_shot_advice(
+                        ctx_sante,
+                        focus="L'athlète te demande une analyse personnalisée de sa récupération : "
+                              "comment améliorer sa HRV, son sommeil et son état de forme, en "
+                              "identifiant ce qui, dans SON entraînement récent et SON hygiène de "
+                              "vie, explique les tendances observées.",
+                        api_key=own_gemini_key,
+                    )
+                except Exception as e:
+                    st.session_state.sante_advice = f"Erreur pendant l'analyse : {e}"
+        if st.session_state.get("sante_advice"):
+            st.markdown(st.session_state.sante_advice)
+    st.divider()
+
+    # --- Sommeil par phases ---
+    st.markdown("**🛌 Ton sommeil par phases (30 dernières nuits)**")
+    st.caption("Le sommeil **profond** répare le corps (muscles, hormones), le **paradoxal (REM)** "
+               "répare la tête (mémoire, système nerveux — clé pour la HRV). Repères d'une bonne "
+               "nuit : ~15-20 % de profond, ~20-25 % de REM.")
+    phases = analysis.sleep_phases(sleep)
+    if phases.empty:
+        st.caption("Pas encore de données de sommeil détaillées (synchronise, ou vérifie que ta "
+                   "montre enregistre le sommeil).")
     else:
-        # Paire par défaut : toutes les séances non assignées lui sont comptées
-        actives = shoes_df[shoes_df["retired"] == 0]
-        default_saved = storage.read_manual_note("default_shoe_id", db_path=USER_DB_PATH)
-        default_id = int(default_saved[0]) if default_saved else None
-        if not actives.empty:
-            options = actives["id"].tolist()
-            idx = options.index(default_id) if default_id in options else 0
-            default_id = st.selectbox(
-                "Paire par défaut (les séances non assignées lui sont attribuées)",
-                options, index=idx,
-                format_func=lambda i: f"{actives.set_index('id').loc[i, 'brand']} "
-                                      f"{actives.set_index('id').loc[i, 'name']}".strip(),
-            )
-            if not default_saved or int(default_saved[0]) != default_id:
-                storage.save_manual_note("default_shoe_id", float(default_id), db_path=USER_DB_PATH)
+        fig_ph = go.Figure()
+        for label, color in [("Profond", "#0B3866"), ("Paradoxal (REM)", "#3D85C6"),
+                             ("Léger", "#A8CCEC"), ("Éveillé", "#D9D9D9")]:
+            fig_ph.add_trace(go.Bar(x=phases["date"], y=phases[label], name=label,
+                                     marker_color=color))
+        fig_ph.update_layout(barmode="stack", yaxis_title="Heures", xaxis_title="")
+        st.plotly_chart(mobile_friendly(fig_ph), width='stretch', config=PLOTLY_CONFIG)
+        tot = phases[["Profond", "Léger", "Paradoxal (REM)", "Éveillé"]].sum().sum()
+        if tot > 0:
+            pd_pct = phases["Profond"].sum() / tot * 100
+            rem_pct = phases["Paradoxal (REM)"].sum() / tot * 100
+            pcol1, pcol2, pcol3 = st.columns(3)
+            pcol1.metric("Nuit moyenne", f"{phases['total_h'].mean():.1f} h")
+            pcol2.metric("Profond", f"{pd_pct:.0f} %",
+                         help="Repère : 15-20 % d'une nuit")
+            pcol3.metric("Paradoxal (REM)", f"{rem_pct:.0f} %",
+                         help="Repère : 20-25 % d'une nuit")
+    st.divider()
 
-        # Kilométrage par paire (assignées + défaut pour les non-assignées)
-        acts_shoes = activities.copy()
-        if not acts_shoes.empty:
-            mapping = assign_df.set_index("activity_id")["shoe_id"] if not assign_df.empty else pd.Series(dtype=float)
-            acts_shoes["shoe_id"] = acts_shoes["activity_id"].astype(str).map(mapping)
-            if default_id is not None:
-                acts_shoes["shoe_id"] = acts_shoes["shoe_id"].fillna(default_id)
+    # --- Stress ---
+    st.markdown("**😮‍💨 Ton stress (60 derniers jours)**")
+    st.caption("Le stress Garmin (0-100) agrège la variabilité cardiaque tout au long de la "
+               "journée : c'est le stress GLOBAL (boulot, vie, entraînement). Ce qui compte : "
+               "les périodes durablement au-dessus de TA moyenne.")
+    if wellness.empty or "stress_avg" not in wellness.columns or wellness["stress_avg"].notna().sum() < 5:
+        st.caption("Pas encore assez de données de stress.")
+    else:
+        stress_df = wellness.dropna(subset=["stress_avg"]).sort_values("date").copy()
+        stress_df = stress_df[stress_df["date"] >= pd.Timestamp.now() - pd.Timedelta(days=60)]
+        stress_df["stress_lisse"] = stress_df["stress_avg"].rolling(7, min_periods=3).mean()
+        fig_st = go.Figure()
+        fig_st.add_trace(go.Bar(x=stress_df["date"], y=stress_df["stress_avg"],
+                                 name="Stress du jour", marker_color="#A8CCEC", opacity=0.6))
+        fig_st.add_trace(go.Scatter(x=stress_df["date"], y=stress_df["stress_lisse"],
+                                     name="Tendance 7 j", line=dict(color="#22303F", width=3)))
+        fig_st.add_hline(y=stress_df["stress_avg"].mean(), line_dash="dash", line_color="gray")
+        fig_st.update_layout(yaxis_title="Stress (0-100)", xaxis_title="")
+        st.plotly_chart(mobile_friendly(fig_st), width='stretch', config=PLOTLY_CONFIG)
+        st.caption(f"Ta moyenne sur la période : **{stress_df['stress_avg'].mean():.0f}** "
+                   "(la ligne pointillée).")
 
-        st.markdown("### Tes paires")
-        for _, shoe in shoes_df.sort_values("retired").iterrows():
-            runs = acts_shoes[acts_shoes["shoe_id"] == shoe["id"]] if not acts_shoes.empty else pd.DataFrame()
-            km = runs["distance_km"].sum() if not runs.empty else 0.0
-            target = shoe["km_target"] or 700
-            pct = min(km / target, 1.0)
-            titre = f"{shoe['brand']} {shoe['name']}".strip()
-            if shoe["retired"]:
-                titre += " · 🪦 retraitée"
-            with st.container(border=True):
-                hc1, hc2 = st.columns([3, 1])
-                hc1.markdown(f"**{titre}**")
-                if shoe["id"] == default_id and not shoe["retired"]:
-                    hc1.caption("⭐ paire par défaut")
-                mc1, mc2, mc3 = st.columns(3)
-                mc1.metric("Kilométrage", f"{km:.0f} km")
-                mc2.metric("Séances", len(runs))
-                if not runs.empty and runs["avg_pace_s_per_km"].notna().any():
-                    best = runs["avg_pace_s_per_km"].min()
-                    mc3.metric("Meilleure allure", f"{int(best // 60)}:{int(best % 60):02d}/km")
-                st.progress(pct, text=f"Usure : {km:.0f} / {target:.0f} km"
-                            + (" — ⚠️ pense au renouvellement !" if pct >= 0.85 else ""))
-                bc1, bc2 = st.columns(2)
-                if not shoe["retired"] and bc1.button("Mettre à la retraite", key=f"ret{shoe['id']}"):
-                    storage.set_shoe_retired(int(shoe["id"]), True, db_path=USER_DB_PATH)
-                    st.rerun()
-                if shoe["retired"] and bc1.button("Réactiver", key=f"unret{shoe['id']}"):
-                    storage.set_shoe_retired(int(shoe["id"]), False, db_path=USER_DB_PATH)
-                    st.rerun()
-
-        # Réassigner une séance récente à une autre paire
-        if not activities.empty and not actives.empty:
-            with st.expander("🔁 Assigner une séance à une paire précise"):
-                recent = activities.sort_values("date", ascending=False).head(20)
-                run_choice = st.selectbox(
-                    "Séance", recent["activity_id"],
-                    format_func=lambda a: (
-                        f"{recent.set_index('activity_id').loc[a, 'date'].strftime('%d/%m')} — "
-                        f"{recent.set_index('activity_id').loc[a, 'name']} "
-                        f"({recent.set_index('activity_id').loc[a, 'distance_km']:.1f} km)"),
-                )
-                shoe_choice = st.selectbox(
-                    "Paire", actives["id"],
-                    format_func=lambda i: f"{actives.set_index('id').loc[i, 'brand']} "
-                                          f"{actives.set_index('id').loc[i, 'name']}".strip(),
-                    key="assign_shoe_choice",
-                )
-                if st.button("✅ Assigner"):
-                    storage.assign_shoe(str(run_choice), int(shoe_choice), db_path=USER_DB_PATH)
-                    st.success("Séance assignée !")
-                    st.rerun()
+    st.caption("⚠️ Ces analyses sont des repères d'entraînement, pas un avis médical : si un "
+               "symptôme persiste (fatigue anormale, sommeil durablement dégradé), parles-en à "
+               "un professionnel de santé.")

@@ -21,6 +21,12 @@ fichier toi-même. Pour voir la liste : **« montre-moi la boîte à idées »**
 
 _(rien pour l'instant)_
 
+## 🗄️ Mises de côté
+
+- **Onglet Chaussures** (parc, usure, records par paire) : retiré le 26/07/2026
+  au profit de l'onglet Santé — le code complet reste récupérable dans
+  l'historique git (branche `ameliorations-maxime` / commits de juillet 2026).
+
 ## ✅ Faites
 
 - **Compatibilité Suunto (et toutes marques) via Strava** — connexion Strava

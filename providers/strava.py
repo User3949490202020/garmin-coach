@@ -33,10 +33,8 @@ API_BASE = "https://www.strava.com/api/v3"
 # Types d'activités Strava considérés comme « course à pied ».
 RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 
-# Types Strava considérés comme renforcement / musculation ou étirements
-# (comptent dans la charge, hors course).
-STRENGTH_TYPES = {"WeightTraining", "Workout", "Crossfit",
-                  "HighIntensityIntervalTraining", "Yoga"}
+# Côté Strava, tout ce qui n'est pas de la course compte comme activité
+# croisée (charge/fatigue) : musculation, crossfit, vélo, natation, yoga...
 
 
 # ----------------------------------------------------------------------
@@ -238,7 +236,7 @@ class StravaProvider(DataProvider):
                     except ValueError:
                         pass
                 t = a.get("sport_type") or a.get("type")
-                if t not in STRENGTH_TYPES:
+                if t in RUN_TYPES:  # la course est déjà dans get_activities
                     continue
                 rows.append({
                     "activity_id": str(a.get("id")),

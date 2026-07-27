@@ -980,3 +980,140 @@ def vma_fraction_habits(vs_df: pd.DataFrame, n_sessions: int = 4, threshold_s: f
         "last_slow": avg_last >= threshold_s,
         "last_fast": avg_last <= -threshold_s,
     }
+
+
+# ======================================================================
+# Santé : phases de sommeil, stress, conseils personnalisés
+# ======================================================================
+
+def sleep_phases(sleep_df: pd.DataFrame, days: int = 30) -> pd.DataFrame:
+    """Heures par phase de sommeil (profond / léger / paradoxal / éveil) par nuit."""
+    if sleep_df is None or sleep_df.empty:
+        return pd.DataFrame()
+    df = sleep_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df[df["date"] >= pd.Timestamp.now() - pd.Timedelta(days=days)].sort_values("date")
+    df = df.dropna(subset=["total_sleep_s"])
+    if df.empty:
+        return df
+    out = pd.DataFrame({"date": df["date"]})
+    for col, label in [("deep_sleep_s", "Profond"), ("light_sleep_s", "Léger"),
+                       ("rem_sleep_s", "Paradoxal (REM)"), ("awake_s", "Éveillé")]:
+        out[label] = (df[col].fillna(0) / 3600).round(2) if col in df.columns else 0.0
+    out["total_h"] = (df["total_sleep_s"] / 3600).round(2)
+    return out
+
+
+def health_insights(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame,
+                    activities_df: pd.DataFrame, cross_df: pd.DataFrame,
+                    hr_max: int = 190) -> list[dict]:
+    """
+    Conseils personnalisés dérivés des données : chaque constat croise une
+    dérive observée (HRV, sommeil, stress) avec une cause plausible visible
+    dans l'entraînement (intensité, sports croisés, monotonie). Retourne une
+    liste de {niveau: 'ok'|'info'|'alerte', texte}.
+    """
+    tips = []
+    now = pd.Timestamp.now().normalize()
+
+    w = wellness_df.copy() if wellness_df is not None else pd.DataFrame()
+    if not w.empty:
+        w["date"] = pd.to_datetime(w["date"])
+
+    # --- HRV : 15 derniers jours vs référence 60 jours ---
+    if not w.empty and "hrv_avg" in w.columns and w["hrv_avg"].notna().sum() >= 10:
+        recent = w[w["date"] >= now - pd.Timedelta(days=15)]["hrv_avg"].dropna()
+        base = w[w["date"] >= now - pd.Timedelta(days=60)]["hrv_avg"].dropna()
+        if len(recent) >= 4 and len(base) >= 10:
+            delta_pct = (recent.mean() / base.mean() - 1) * 100
+            if delta_pct <= -7:
+                causes = []
+                # Cause plausible n°1 : plus de séances croisées intenses qu'avant
+                if cross_df is not None and not cross_df.empty:
+                    c = cross_df.copy()
+                    c["date"] = pd.to_datetime(c["date"])
+                    c = c[~c["sport"].astype(str).str.contains("yoga|stretch", case=False, na=False)]
+                    n_recent = len(c[c["date"] >= now - pd.Timedelta(days=15)])
+                    n_before = len(c[(c["date"] < now - pd.Timedelta(days=15))
+                                     & (c["date"] >= now - pd.Timedelta(days=30))])
+                    if n_recent > n_before:
+                        causes.append(f"tes séances croisées (crossfit/renfo/vélo...) sont passées de "
+                                      f"{n_before} à {n_recent} sur les 15 derniers jours")
+                # Cause plausible n°2 : plus de course en intensité
+                if activities_df is not None and not activities_df.empty:
+                    it = session_intensity(activities_df, hr_max=hr_max)
+                    if not it.empty:
+                        h_recent = len(it[(it["date"] >= now - pd.Timedelta(days=15))
+                                          & (it["intensite"] == "Dur")])
+                        h_before = len(it[(it["date"] < now - pd.Timedelta(days=15))
+                                          & (it["date"] >= now - pd.Timedelta(days=30))
+                                          & (it["intensite"] == "Dur")])
+                        if h_recent > h_before:
+                            causes.append(f"tes séances de course dures sont passées de {h_before} "
+                                          f"à {h_recent}")
+                txt = (f"Ta HRV a baissé de {abs(delta_pct):.0f} % sur les 15 derniers jours par "
+                       f"rapport à ta référence")
+                if causes:
+                    txt += (" — et sur la même période, " + " et ".join(causes)
+                            + ". Allège l'intensité la semaine prochaine pour laisser ton "
+                            "système nerveux récupérer.")
+                else:
+                    txt += (". L'entraînement n'a pas visiblement changé : regarde côté sommeil, "
+                            "stress ou hygiène de vie (alcool, écrans tardifs, gros stress pro).")
+                tips.append({"niveau": "alerte", "texte": txt})
+            elif delta_pct >= 5:
+                tips.append({"niveau": "ok",
+                             "texte": f"Ta HRV est {delta_pct:.0f} % au-dessus de ta référence des "
+                                      "2 derniers mois : ton corps encaisse bien la période actuelle."})
+
+    # --- Sommeil : durée moyenne sur 14 jours ---
+    if sleep_df is not None and not sleep_df.empty:
+        s = sleep_df.copy()
+        s["date"] = pd.to_datetime(s["date"])
+        recent_sleep = s[s["date"] >= now - pd.Timedelta(days=14)]["total_sleep_s"].dropna()
+        if len(recent_sleep) >= 5:
+            avg_h = recent_sleep.mean() / 3600
+            if avg_h < 6.8:
+                deficit = (7.5 - avg_h) * 7
+                tips.append({"niveau": "alerte",
+                             "texte": f"Tu dors en moyenne {avg_h:.1f} h par nuit sur 2 semaines — "
+                                      f"soit ~{deficit:.0f} h de dette hebdomadaire vs les 7 h 30 "
+                                      "recommandées pour un sportif. C'est LE levier n°1 pour ta HRV "
+                                      "et ta récup : couche-toi 30 min plus tôt et coupe les écrans "
+                                      "30 min avant de dormir."})
+            elif avg_h >= 7.3:
+                tips.append({"niveau": "ok",
+                             "texte": f"{avg_h:.1f} h de sommeil moyen sur 2 semaines : solide — "
+                                      "c'est la meilleure séance de récupération qui existe."})
+        # Sieste : renfort positif
+        if "nap_s" in s.columns:
+            naps = s[(s["date"] >= now - pd.Timedelta(days=14)) & (s["nap_s"].fillna(0) > 0)]
+            if len(naps) >= 2:
+                tips.append({"niveau": "ok",
+                             "texte": f"{len(naps)} sieste(s) sur les 2 dernières semaines : "
+                                      "excellent réflexe, même 10 minutes comptent."})
+
+    # --- Stress : 7 derniers jours vs habitude ---
+    if not w.empty and "stress_avg" in w.columns and w["stress_avg"].notna().sum() >= 10:
+        s7 = w[w["date"] >= now - pd.Timedelta(days=7)]["stress_avg"].dropna()
+        s28 = w[w["date"] >= now - pd.Timedelta(days=28)]["stress_avg"].dropna()
+        if len(s7) >= 3 and len(s28) >= 10 and s7.mean() > s28.mean() + 7:
+            tips.append({"niveau": "info",
+                         "texte": f"Ton stress moyen de la semaine ({s7.mean():.0f}) est nettement "
+                                  f"au-dessus de ton habitude ({s28.mean():.0f}). Les jours chargés, "
+                                  "remplace l'intensité par du footing Z1-Z2 ou des étirements : "
+                                  "l'entraînement doit décharger le stress, pas l'empiler."})
+
+    # --- Monotonie d'entraînement ---
+    mono = monotony(activities_df, cross_df)
+    if not mono.empty and mono["monotonie"].iloc[-1] > 2:
+        tips.append({"niveau": "info",
+                     "texte": f"Ta charge est très uniforme (monotonie {mono['monotonie'].iloc[-1]:.1f}) : "
+                              "alterne franchement jours durs et jours faciles — c'est l'alternance "
+                              "qui fait progresser la HRV et la forme, pas la régularité de la dose."})
+
+    if not tips:
+        tips.append({"niveau": "info",
+                     "texte": "Pas assez de données récentes pour des conseils personnalisés — "
+                              "synchronise régulièrement et reviens dans quelques jours."})
+    return tips

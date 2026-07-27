@@ -106,7 +106,8 @@ def build_context_summary(activities: pd.DataFrame, wellness: pd.DataFrame, week
         ct["date"] = pd.to_datetime(ct["date"])
         ct = ct[ct["date"] >= cutoff].sort_values("date", ascending=False)
         if not ct.empty:
-            lines.append(f"\n### Séances de renfo/musculation ({len(ct)} au total, {months} derniers mois)")
+            lines.append(f"\n### Séances hors course à pied ({len(ct)} au total, {months} derniers mois : "
+                         "renfo, crossfit, vélo, natation, yoga...)")
             lines.append("(comptent dans la charge d'entraînement et la fatigue, pas dans le volume de course)")
             for _, c in ct.iterrows():
                 dur = f"{c['duration_s'] / 60:.0f} min" if pd.notna(c.get("duration_s")) else "N/A"
@@ -242,4 +243,25 @@ def create_chat_session(context: str, api_key: str = None):
 def ask_coach(chat, question: str) -> str:
     """Envoie une question à la session de chat existante et retourne la réponse texte."""
     response = chat.send_message(question)
+    return response.text
+
+
+def one_shot_advice(context: str, focus: str, api_key: str = None) -> str:
+    """
+    Analyse ponctuelle (hors conversation) : utilisée par le bouton « analyse
+    approfondie » de l'onglet Santé. `focus` décrit l'angle demandé.
+    """
+    client = get_client(api_key)
+    prompt = (
+        "Tu es un coach expert en course à pied et en physiologie de la récupération. "
+        f"{focus}\n\n"
+        "Consignes : réponds en français, tutoie l'athlète, appuie CHAQUE constat sur "
+        "ses données ci-dessous (cite les chiffres), donne 3 à 5 recommandations "
+        "concrètes et actionnables dès cette semaine, en tenant compte de son mode de "
+        "vie visible dans les données (entraînement, sommeil, stress, siestes). "
+        "Termine par la recommandation n°1 en une phrase. Rappelle en une ligne que "
+        "ces conseils ne remplacent pas un avis médical si un symptôme persiste.\n\n"
+        f"DONNÉES DE L'ATHLÈTE :\n{context}"
+    )
+    response = client.models.generate_content(model=MODEL, contents=prompt)
     return response.text
