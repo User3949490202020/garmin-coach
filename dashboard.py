@@ -1367,7 +1367,10 @@ with tab_vma:
             textposition="inside",
         ))
     fig_z.update_layout(barmode="overlay", height=170, showlegend=False,
-                        xaxis=dict(title="bpm", range=[HR_REST, HR_MAX + 5]),
+                        xaxis=dict(title="bpm",
+                                   # L'axe démarre au début de la Z1 (pas à la FC
+                                   # repos) : les zones occupent toute la largeur.
+                                   range=[int(zones_df["bpm_min"].min()) - 3, HR_MAX + 3]),
                         margin=dict(t=10, b=10))
     st.plotly_chart(mobile_friendly(fig_z), width='stretch', config=PLOTLY_CONFIG)
     st.divider()
