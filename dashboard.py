@@ -96,8 +96,10 @@ ENV_PASSWORD = os.getenv("GARMIN_PASSWORD")
 LOCAL_MODE = bool(ENV_EMAIL and ENV_PASSWORD)
 
 st.title("🏃 Ton Coach Running")
-st.caption("**L'entraînement au cordeau.** Tes séances, ton sommeil, ta charge — analysés "
-           "finement, conseillés sur mesure. Directement depuis ta montre.")
+st.markdown("#### Le meilleur coach, c'est toi.")
+st.caption("Tes données parlent — ton coach IA les traduit. Il connaît chacune de tes foulées, "
+           "chaque nuit de sommeil, chaque coup de mou : pose-lui **n'importe quelle question**, "
+           "il répond avec TES chiffres. La science d'un staff pro, l'instinct en plus.")
 
 # ----------------------------------------------------------------------
 # Connexion — affichée en PLEINE PAGE tant qu'on n'est pas connecté :
@@ -576,6 +578,32 @@ with tab_coach:
                 st.session_state.chat_session = None
                 st.error(f"Impossible de démarrer la session avec Gemini : {e}")
 
+        # --- 🎙️ Le brief du jour : le coach parle en premier ---
+        # Généré une fois par jour et par athlète (mis en cache), il accueille
+        # l'utilisateur avec une lecture à chaud de SA forme et de SA journée
+        # idéale — la démonstration immédiate de ce que le coach sait faire.
+        _brief_key = f"brief_{dt.date.today().isoformat()}"
+        _brief = storage.read_text_note(_brief_key, db_path=USER_DB_PATH)
+        if not _brief:
+            with st.spinner("🎙️ Ton coach prépare ton brief du jour..."):
+                try:
+                    _brief_txt = coach_agent.one_shot_advice(
+                        context_summary,
+                        focus="Rédige le BRIEF DU JOUR de l'athlète : 4 phrases maximum, ton "
+                              "complice et direct. 1) Son état de forme du jour (récup, HRV, "
+                              "sommeil d'hier). 2) Ce que ça implique pour aujourd'hui (séance "
+                              "conseillée ou repos, avec allure/zone si pertinent). 3) Un clin "
+                              "d'œil à sa progression ou son objectif. Pas de titre, pas de "
+                              "liste : un vrai petit message de coach qui connaît son athlète.",
+                        api_key=own_gemini_key,
+                    )
+                    storage.save_text_note(_brief_key, _brief_txt, db_path=USER_DB_PATH)
+                    _brief = (_brief_txt, None)
+                except Exception:
+                    _brief = None  # pas de brief aujourd'hui, pas grave
+        if _brief:
+            st.info(f"🎙️ **Le brief du jour de ton coach**\n\n{_brief[0]}")
+
         with st.expander("Voir les données transmises à l'agent"):
             st.text(context_summary)
 
@@ -583,7 +611,19 @@ with tab_coach:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-        question = st.chat_input("Pose ta question au coach...")
+        # --- Questions prêtes à l'emploi : montrer qu'on peut TOUT lui demander ---
+        _suggestions = ["🔍 Analyse ma semaine", "📅 Je fais quoi demain ?",
+                        "😮‍💨 Pourquoi je suis fatigué en ce moment ?",
+                        "⚡ Prépare ma prochaine séance de VMA"]
+        _sq_cols = st.columns(2)
+        _clicked_q = None
+        for _i, _q in enumerate(_suggestions):
+            if _sq_cols[_i % 2].button(_q, key=f"sugg_{_i}", width='stretch'):
+                _clicked_q = _q.split(" ", 1)[1]  # retire l'emoji
+
+        question = st.chat_input("Pose n'importe quelle question à ton coach...")
+        if _clicked_q and not question:
+            question = _clicked_q
         if question and st.session_state.chat_session is not None:
             st.session_state.chat_display_history.append({"role": "user", "content": question})
             storage.append_chat_message("user", question, db_path=USER_DB_PATH)
