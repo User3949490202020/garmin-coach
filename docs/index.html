@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allure — Le meilleur coach, c'est toi.</title>
+<meta name="description" content="Allure transforme les données de ta montre Garmin en coaching personnalisé : brief du jour, zones cardiaques, charge d'entraînement, sommeil, HRV — et un coach IA qui répond à toutes tes questions avec TES chiffres.">
+<meta property="og:title" content="Allure — Le meilleur coach, c'est toi.">
+<meta property="og:description" content="Le coaching que Garmin ne te donne pas. Rejoins la liste d'attente.">
+<meta property="og:type" content="website">
+<style>
+  :root{
+    --ivoire:#FBFAF7; --lin:#F0EDE6; --nuit:#22303F; --laiton:#B08D57;
+    --bleu1:#A8CCEC; --bleu3:#3D85C6; --bleu5:#0B3866; --vert:#2E7D5B;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--ivoire);color:var(--nuit);line-height:1.6}
+  .wrap{max-width:680px;margin:0 auto;padding:0 22px}
+  header{padding:64px 0 40px;text-align:center}
+  .logo{font-size:15px;letter-spacing:.35em;text-transform:uppercase;color:var(--laiton);font-weight:700}
+  h1{font-size:clamp(34px,7vw,54px);line-height:1.12;margin:18px 0 14px;font-weight:800}
+  h1 em{font-style:normal;color:var(--laiton)}
+  .sub{font-size:clamp(17px,3vw,20px);color:#4a5a6d;max-width:540px;margin:0 auto}
+  .cta{display:inline-block;margin-top:28px;background:var(--nuit);color:#fff;text-decoration:none;
+       padding:15px 34px;border-radius:999px;font-weight:700;font-size:17px;transition:transform .15s}
+  .cta:hover{transform:translateY(-2px)}
+  .cta.small{font-size:15px;padding:12px 26px}
+  .badge{display:inline-block;background:var(--lin);border:1px solid #e2ddd2;border-radius:999px;
+         padding:6px 16px;font-size:13.5px;color:#5a6a7d;margin-top:22px}
+  /* Bulle de démo du coach */
+  .demo{background:#fff;border:1px solid #e8e4da;border-radius:18px;padding:22px 24px;
+        margin:46px auto 0;max-width:560px;text-align:left;box-shadow:0 12px 40px rgba(34,48,63,.08)}
+  .demo .who{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--laiton);margin-bottom:10px}
+  .demo p{font-size:15.5px;color:#31404f}
+  .demo .meta{margin-top:14px;font-size:12.5px;color:#93a1b0}
+  section{padding:56px 0}
+  section.alt{background:var(--lin)}
+  h2{font-size:clamp(24px,4.5vw,32px);margin-bottom:10px;font-weight:800}
+  .lead{color:#4a5a6d;margin-bottom:34px;max-width:560px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}
+  .card{background:#fff;border:1px solid #e8e4da;border-radius:16px;padding:22px}
+  section.alt .card{background:var(--ivoire)}
+  .card .ico{font-size:26px}
+  .card h3{font-size:16.5px;margin:10px 0 6px}
+  .card p{font-size:14px;color:#5a6a7d}
+  .zones{display:flex;border-radius:8px;overflow:hidden;margin:16px 0 6px;height:26px;font-size:11px;color:#fff;text-align:center;font-weight:700}
+  .zones div{display:flex;align-items:center;justify-content:center}
+  .steps{counter-reset:s;list-style:none}
+  .steps li{counter-increment:s;display:flex;gap:16px;align-items:flex-start;margin-bottom:20px}
+  .steps li::before{content:counter(s);flex:0 0 34px;height:34px;border-radius:50%;background:var(--nuit);
+                    color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .steps b{display:block;margin-bottom:2px}
+  .steps span{font-size:14.5px;color:#5a6a7d}
+  /* Formulaire */
+  form{background:#fff;border:1px solid #e8e4da;border-radius:20px;padding:30px 26px;
+       box-shadow:0 16px 50px rgba(34,48,63,.09)}
+  label{display:block;font-weight:700;font-size:14.5px;margin:18px 0 8px}
+  input[type=email]{width:100%;padding:13px 16px;border:1.5px solid #d8d2c4;border-radius:12px;
+       font-size:16px;background:var(--ivoire)}
+  input[type=email]:focus{outline:none;border-color:var(--laiton)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chips input{display:none}
+  .chips span{display:inline-block;padding:9px 16px;border:1.5px solid #d8d2c4;border-radius:999px;
+       font-size:14px;cursor:pointer;background:var(--ivoire);transition:all .12s}
+  .chips input:checked + span{background:var(--nuit);color:#fff;border-color:var(--nuit)}
+  button{width:100%;margin-top:26px;background:var(--laiton);color:#fff;border:none;border-radius:999px;
+       padding:16px;font-size:17px;font-weight:800;cursor:pointer;transition:transform .15s}
+  button:hover{transform:translateY(-2px)}
+  .fine{font-size:12.5px;color:#93a1b0;margin-top:14px;text-align:center}
+  footer{padding:44px 0 60px;text-align:center;font-size:13px;color:#93a1b0}
+  footer .logo{font-size:12px}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="logo">Allure</div>
+  <h1>Le meilleur coach,<br><em>c'est toi.</em></h1>
+  <p class="sub">Ta montre Garmin sait tout de toi. <strong>Allure</strong> transforme ses données
+     en vrai coaching : un brief chaque matin, tes zones, ta charge, ta récupération —
+     et un coach IA à qui tu peux <strong>tout</strong> demander.</p>
+  <a class="cta" href="#liste">Rejoindre la liste d'attente</a>
+  <div class="badge">⌚ Conçu pour les coureurs équipés Garmin</div>
+
+  <div class="demo">
+    <div class="who">🎙️ Le brief du jour de ton coach</div>
+    <p>« Belle nuit (7 h 40, HRV en hausse) : tu as digéré ta VMA de mardi. Aujourd'hui,
+       fenêtre idéale pour ta séance seuil — 3 × 8 min entre 4:15 et 4:20/km. Et à J-42 de
+       ton 10 km, ta courbe de forme est exactement où il faut. On y va. »</p>
+    <div class="meta">Généré chaque matin à partir de TES données — séances, sommeil, HRV, charge.</div>
+  </div>
+</header>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Ce que ta montre ne te dira jamais</h2>
+    <p class="lead">Garmin mesure. <strong>Allure conseille.</strong> Chaque donnée est traduite
+       en décision d'entraînement — avec la précision d'un staff professionnel et le ton d'un
+       coach qui te connaît.</p>
+    <div class="cards">
+      <div class="card"><div class="ico">💬</div><h3>Un coach qui répond à tout</h3>
+        <p>« Je fais quoi demain ? » « Pourquoi je suis fatigué ? » Il répond avec tes chiffres,
+           pas des généralités — et il connaît ton objectif.</p></div>
+      <div class="card"><div class="ico">🎯</div><h3>Tes 5 zones personnalisées</h3>
+        <p>Zones Karvonen calibrées sur TA FCmax et TA FC repos. Chaque séance classée,
+           l'équilibre 80/20 surveillé.</p>
+        <div class="zones">
+          <div style="background:#A8CCEC;flex:1">Z1</div><div style="background:#6FA8DC;flex:1">Z2</div>
+          <div style="background:#3D85C6;flex:1">Z3</div><div style="background:#1C5A99;flex:1">Z4</div>
+          <div style="background:#0B3866;flex:1">Z5</div>
+        </div></div>
+      <div class="card"><div class="ico">🛡️</div><h3>Le risque avant la blessure</h3>
+        <p>Charge aiguë vs chronique (ACWR), monotonie, espacement des séances dures :
+           tu sais quand pousser — et quand lever le pied.</p></div>
+      <div class="card"><div class="ico">😴</div><h3>La récup, enfin lisible</h3>
+        <p>Sommeil par phases, HRV, stress, siestes : un score de forme quotidien et des
+           conseils personnalisés pour l'améliorer.</p></div>
+      <div class="card"><div class="ico">🚀</div><h3>Ta VMA au scalpel</h3>
+        <p>Chaque fractionné décortiqué : allure des répétitions, régularité, habitudes à
+           corriger. « Ta F1 part trop vite » — voilà le niveau de détail.</p></div>
+      <div class="card"><div class="ico">🌡️</div><h3>La météo en contexte</h3>
+        <p>Ta « mauvaise » séance par 28 °C était peut-être ta meilleure : l'allure est
+           réajustée à la chaleur pour lire ta vraie forme.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Comment ça marche</h2>
+    <ol class="steps" style="margin-top:26px">
+      <li><div><b>Connecte ton compte Garmin</b>
+        <span>Tes séances, ton sommeil et ta récupération se synchronisent automatiquement.</span></div></li>
+      <li><div><b>Reçois ton brief du jour</b>
+        <span>Chaque matin, ton coach lit tes données et te dit quoi faire — ou quoi ne pas faire.</span></div></li>
+      <li><div><b>Discute, ajuste, progresse</b>
+        <span>Fixe ton objectif une fois : chaque réponse du coach le garde en tête.</span></div></li>
+    </ol>
+  </div>
+</section>
+
+<section class="alt" id="liste">
+  <div class="wrap">
+    <h2>Rejoins les premiers coureurs</h2>
+    <p class="lead">L'accès anticipé ouvre bientôt, en petit comité. Les inscrits de la liste
+       d'attente auront le <strong>tarif fondateur à vie</strong> — et leur mot à dire sur la
+       suite.</p>
+    <form action="https://formsubmit.co/vfuentes@hotmail.fr" method="POST">
+      <input type="hidden" name="_subject" value="🏃 Allure — nouvelle inscription liste d'attente">
+      <input type="hidden" name="_captcha" value="true">
+      <input type="hidden" name="_template" value="table">
+      <input type="text" name="_honey" style="display:none">
+      <label for="email">Ton email</label>
+      <input type="email" id="email" name="email" required placeholder="toi@exemple.fr">
+      <label>Quelle montre portes-tu ?</label>
+      <div class="chips">
+        <label><input type="radio" name="montre" value="Garmin" required><span>⌚ Garmin</span></label>
+        <label><input type="radio" name="montre" value="Apple Watch"><span>Apple Watch</span></label>
+        <label><input type="radio" name="montre" value="Coros"><span>Coros</span></label>
+        <label><input type="radio" name="montre" value="Suunto"><span>Suunto</span></label>
+        <label><input type="radio" name="montre" value="Polar"><span>Polar</span></label>
+        <label><input type="radio" name="montre" value="Autre / aucune"><span>Autre</span></label>
+      </div>
+      <label>Tu cours combien de fois par semaine ?</label>
+      <div class="chips">
+        <label><input type="radio" name="frequence" value="1x" required><span>1×</span></label>
+        <label><input type="radio" name="frequence" value="2-3x"><span>2-3×</span></label>
+        <label><input type="radio" name="frequence" value="4-5x"><span>4-5×</span></label>
+        <label><input type="radio" name="frequence" value="6x+"><span>6× et +</span></label>
+      </div>
+      <button type="submit">Je rejoins la liste d'attente →</button>
+      <p class="fine">Zéro spam : uniquement l'ouverture de l'accès anticipé.
+         Ton email ne sera jamais partagé.</p>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="logo">Allure</div>
+  <p style="margin-top:10px">Le meilleur coach, c'est toi.</p>
+  <p style="margin-top:14px;max-width:480px;margin-left:auto;margin-right:auto">
+    Allure est un outil d'entraînement, pas un dispositif médical. Garmin est une marque de
+    Garmin Ltd. — Allure est un produit indépendant, non affilié à Garmin.</p>
+</footer>
+
+</body>
+</html>
