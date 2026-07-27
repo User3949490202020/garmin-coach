@@ -43,7 +43,7 @@ STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 STRAVA_REDIRECT_URI = os.getenv("STRAVA_REDIRECT_URI")
 STRAVA_CONFIGURED = bool(STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET and STRAVA_REDIRECT_URI)
 
-st.set_page_config(page_title="Coach Running Garmin", page_icon="🏃", layout="wide")
+st.set_page_config(page_title="Allure — le meilleur coach, c'est toi", page_icon="🏃", layout="wide")
 
 # Sur téléphone, la barre d'onglets déborde et oblige à scroller vers la
 # droite : on l'autorise à passer sur plusieurs lignes (2 lignes sur mobile,
@@ -95,7 +95,7 @@ ENV_EMAIL = os.getenv("GARMIN_EMAIL")
 ENV_PASSWORD = os.getenv("GARMIN_PASSWORD")
 LOCAL_MODE = bool(ENV_EMAIL and ENV_PASSWORD)
 
-st.title("🏃 Ton Coach Running")
+st.title("🏃 Allure")
 st.markdown("#### Le meilleur coach, c'est toi.")
 st.caption("Tes données parlent — ton coach IA les traduit. Il connaît chacune de tes foulées, "
            "chaque nuit de sommeil, chaque coup de mou : pose-lui **n'importe quelle question**, "
