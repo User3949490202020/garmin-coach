@@ -952,6 +952,39 @@ with tab_seances:
                            "fourchette qui ne cause ni blessure ni inconfort n'a pas besoin "
                            "d'être « corrigée ».")
 
+        # --- Longueur de foulée par type de séance (détecteur de sur-foulée) ---
+        st.markdown("**📏 Ta longueur de foulée par type de séance**")
+        st.caption("Une foulée « globale » ne veut rien dire : elle s'allonge naturellement avec "
+                   "la vitesse. Ventilée par intensité, elle devient parlante : **des pas trop "
+                   "grands à allure facile** (foulée longue + cadence basse) = sur-foulée, le "
+                   "défaut technique qui freine à chaque appui et augmente les chocs.")
+        strides = analysis.stride_by_intensity(activities, hr_max=HR_MAX)
+        if strides.empty:
+            st.caption("Pas assez de séances avec cadence et FC sur la période.")
+        else:
+            labels_stride = {"Facile": "🟢 Endurance fondamentale", "Moyen": "🟠 Seuil / tempo",
+                             "Dur": "🔴 VMA*"}
+            scols = st.columns(len(strides))
+            for col, (_, r) in zip(scols, strides.set_index("intensite")
+                                   .reindex(["Facile", "Moyen", "Dur"]).dropna().reset_index().iterrows()):
+                col.metric(labels_stride[r["intensite"]], f"{r['foulee_m']:.2f} m",
+                           help=f"Cadence moyenne {r['cadence']:.0f} pas/min, "
+                                f"{int(r['nb'])} séance(s)")
+            f_row = strides[strides["intensite"] == "Facile"]
+            _taille_saved = storage.read_manual_note("taille_cm", db_path=USER_DB_PATH)
+            if not f_row.empty and _taille_saved:
+                ratio = f_row.iloc[0]["foulee_m"] / (_taille_saved[0] / 100)
+                if ratio > 0.68 and f_row.iloc[0]["cadence"] < 165:
+                    st.warning(f"🟠 En endurance fondamentale, ta foulée ({f_row.iloc[0]['foulee_m']:.2f} m) "
+                               f"est longue pour ta taille avec une cadence basse "
+                               f"({f_row.iloc[0]['cadence']:.0f}) : signe classique de sur-foulée. "
+                               "Raccourcis en montant légèrement la cadence — pas en te penchant.")
+                else:
+                    st.success(f"🟢 En endurance fondamentale, ta foulée ({f_row.iloc[0]['foulee_m']:.2f} m, "
+                               f"soit {ratio:.0%} de ta taille) est dans une plage saine.")
+            st.caption("*La foulée « VMA » est sous-estimée : la moyenne de la séance inclut les "
+                       "trots de récupération entre fractions. À lire en tendance, pas en absolu.")
+
 
 
 # ----------------------------------------------------------------------

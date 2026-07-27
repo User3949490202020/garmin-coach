@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Tous les sports dans la charge, ultra/trail en course, onglet Santé.
+# Longueur de foulée par type de séance (détecteur de sur-foulée).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

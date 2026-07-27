@@ -1117,3 +1117,28 @@ def health_insights(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame,
                      "texte": "Pas assez de données récentes pour des conseils personnalisés — "
                               "synchronise régulièrement et reviens dans quelques jours."})
     return tips
+
+
+def stride_by_intensity(activities_df: pd.DataFrame, hr_max: int = 190,
+                        months: int = 6) -> pd.DataFrame:
+    """
+    Longueur de foulée moyenne (en mètres) par type de séance (Facile / Moyen /
+    Dur), calculée à partir de la vitesse et de la cadence : foulée = vitesse
+    (m/min) ÷ cadence (pas/min). Une foulée globale ne veut rien dire (elle
+    varie avec l'allure) ; ventilée par intensité, elle révèle la sur-foulée
+    (pas trop grands à allure facile).
+    """
+    it = session_intensity(activities_df, hr_max=hr_max)
+    if it.empty:
+        return pd.DataFrame()
+    df = it[it["date"] >= pd.Timestamp.now() - pd.DateOffset(months=months)].copy()
+    df = df.dropna(subset=["avg_cadence", "avg_pace_s_per_km"])
+    df = df[(df["avg_cadence"] > 120) & (df["avg_pace_s_per_km"] > 120)]  # garde-fous
+    if df.empty:
+        return pd.DataFrame()
+    df["stride_m"] = 60000 / (df["avg_pace_s_per_km"] * df["avg_cadence"])
+    out = (df.groupby("intensite")
+           .agg(foulee_m=("stride_m", "mean"), cadence=("avg_cadence", "mean"),
+                nb=("stride_m", "size"))
+           .reset_index())
+    return out[out["intensite"].isin(["Facile", "Moyen", "Dur"])]
