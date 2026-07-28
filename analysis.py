@@ -135,14 +135,18 @@ def recovery_score(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame = None) -> 
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
 
-    # Bonus sieste du jour (fusionné par date depuis les données de sommeil)
+    # Bonus sieste du jour + note de sommeil de la nuit (fusionnés par date).
+    # La note de sommeil (Garmin OU saisie manuelle quand la montre a lâché)
+    # participe au score : une excellente nuit compte, même sans HRV mesurée.
     nap_bonus = pd.Series(0.0, index=df.index)
-    if sleep_df is not None and not sleep_df.empty and "nap_s" in sleep_df.columns:
-        naps = sleep_df.copy()
-        naps["date"] = pd.to_datetime(naps["date"])
-        nap_map = naps.set_index("date")["nap_s"]
-        nap_min = df["date"].map(nap_map).fillna(0) / 60
-        nap_bonus = (nap_min * 0.15).clip(0, 5)  # 10 min → +1.5, 30 min → +4.5
+    if sleep_df is not None and not sleep_df.empty:
+        sl = sleep_df.copy()
+        sl["date"] = pd.to_datetime(sl["date"])
+        if "nap_s" in sl.columns:
+            nap_min = df["date"].map(sl.set_index("date")["nap_s"]).fillna(0) / 60
+            nap_bonus = (nap_min * 0.15).clip(0, 5)  # 10 min → +1.5, 30 min → +4.5
+        if "sleep_score" in sl.columns:
+            df["_sleep_score"] = df["date"].map(sl.set_index("date")["sleep_score"])
 
     def zscore(col):
         if col not in df.columns:
@@ -158,6 +162,7 @@ def recovery_score(wellness_df: pd.DataFrame, sleep_df: pd.DataFrame = None) -> 
         (-zscore("resting_hr"), 1.0),       # FC repos plus basse = mieux
         (zscore("hrv_avg"), 1.0),           # HRV plus haut = mieux
         (zscore("body_battery_max"), 1.0),  # Body battery plus haut = mieux
+        (zscore("_sleep_score"), 0.6),      # Bonne nuit (mesurée ou saisie) = mieux
         (-zscore("stress_avg"), 0.7),       # Stress plus bas = mieux
         (-zscore("steps"), 0.4),            # Beaucoup plus de pas que d'habitude = fatigue en plus
     ]

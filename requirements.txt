@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Correction manuelle d'une nuit mal mesurée (montre déchargée), protégée des synchros.
+# Note de sommeil intégrée au score de récup + 4 zones de couleurs.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

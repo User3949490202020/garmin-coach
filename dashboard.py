@@ -1123,26 +1123,31 @@ with tab_recup:
         rec = analysis.recovery_score(wellness, sleep) if not wellness.empty else pd.DataFrame()
         if not rec.empty:
             st.subheader("Score de récupération quotidien")
-            st.caption("Basé sur ta FC repos, ta HRV, ton Body Battery, ton stress et tes pas comparés "
-                       "à ta moyenne perso des 28 derniers jours. Tes siestes comptent aussi : même "
-                       "10 minutes ajoutent un petit bonus au score du jour.")
-            # 3 zones à couleur fixe (plutôt qu'un dégradé continu par barre,
-            # beaucoup moins lisible d'un coup d'œil) : 50 = ta moyenne perso.
+            st.caption("Basé sur ta FC repos, ta HRV, ton Body Battery, **ta note de sommeil** "
+                       "(mesurée par la montre ou saisie à la main), ton stress et tes pas, "
+                       "comparés à ta moyenne perso des 28 derniers jours. Tes siestes comptent "
+                       "aussi. Repère : 50 = ta moyenne — un lendemain de VMA en « moyen bas », "
+                       "c'est normal, pas inquiétant.")
+            # 4 zones à couleur fixe : 50 = ta moyenne perso.
             def _recovery_zone(v):
                 if pd.isna(v):
                     return "Donnée manquante"
                 if v < 35:
-                    return "Fatigue"
+                    return "Mauvaise récup"
+                if v < 50:
+                    return "Moyen bas"
                 if v <= 65:
-                    return "Normal"
-                return "Bonne récup"
+                    return "Moyen bon"
+                return "Très bon"
             rec = rec.copy()
             rec["zone"] = rec["recovery_score"].apply(_recovery_zone)
             fig = px.bar(
                 rec, x="date", y="recovery_score", color="zone",
-                color_discrete_map={"Fatigue": "crimson", "Normal": "orange",
-                                    "Bonne récup": "seagreen", "Donnée manquante": "lightgray"},
-                category_orders={"zone": ["Fatigue", "Normal", "Bonne récup", "Donnée manquante"]},
+                color_discrete_map={"Mauvaise récup": "crimson", "Moyen bas": "#F28C28",
+                                    "Moyen bon": "#F2C230", "Très bon": "seagreen",
+                                    "Donnée manquante": "lightgray"},
+                category_orders={"zone": ["Mauvaise récup", "Moyen bas", "Moyen bon",
+                                          "Très bon", "Donnée manquante"]},
             )
             fig.update_layout(legend_title_text="")
             st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
