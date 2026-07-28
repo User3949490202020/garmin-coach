@@ -1075,7 +1075,10 @@ with tab_recup:
     # correction est alors marquée "override" et la synchro Garmin ne peut
     # plus l'écraser avec sa donnée incomplète.
     with st.expander("📝 Saisir ou corriger une nuit à la main"):
-        manual_date = st.date_input("Nuit du", value=dt.date.today() - dt.timedelta(days=1),
+        st.caption("📅 **Convention (la même que Garmin)** : une nuit est datée du **matin du "
+                   "réveil**. La nuit de dimanche à lundi = la date de lundi. Pour corriger la "
+                   "nuit dernière, choisis donc la date d'aujourd'hui.")
+        manual_date = st.date_input("Nuit se terminant le matin du", value=dt.date.today(),
                                     max_value=dt.date.today(), key="manual_sleep_date")
         date_iso = manual_date.isoformat()
         already = sleep[sleep["date"].astype(str).str[:10] == date_iso] if not sleep.empty else pd.DataFrame()
@@ -1146,6 +1149,8 @@ with tab_recup:
 
         if not sleep.empty:
             st.subheader("Score de sommeil Garmin (6 derniers mois)")
+            st.caption("Chaque nuit est datée du **matin du réveil** (convention Garmin) : le "
+                       "point du lundi = la nuit de dimanche à lundi.")
             sleep_sorted = sleep.copy()
             sleep_sorted["date"] = pd.to_datetime(sleep_sorted["date"])
             sleep_sorted = sleep_sorted.sort_values("date")
