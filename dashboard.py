@@ -1069,25 +1069,33 @@ with tab_seances:
 # Récupération
 # ----------------------------------------------------------------------
 with tab_recup:
-    # --- Saisie manuelle d'une nuit (montre non portée) ---
-    # La synchro Garmin reste la référence : la saisie manuelle comble les
-    # trous nuit par nuit, et si Garmin a une vraie mesure pour cette date,
-    # elle reprend le dessus à la prochaine synchro. Les nuits saisies entrent
-    # dans le graphique de sommeil et le contexte du coach IA comme les autres.
-    with st.expander("📝 Saisir une nuit à la main (montre non portée)"):
+    # --- Saisie manuelle d'une nuit (montre non portée OU mesure faussée) ---
+    # La synchro Garmin reste la référence, mais une nuit peut être corrigée
+    # à la main : montre déchargée en pleine nuit, mesure aberrante... La
+    # correction est alors marquée "override" et la synchro Garmin ne peut
+    # plus l'écraser avec sa donnée incomplète.
+    with st.expander("📝 Saisir ou corriger une nuit à la main"):
         manual_date = st.date_input("Nuit du", value=dt.date.today() - dt.timedelta(days=1),
                                     max_value=dt.date.today(), key="manual_sleep_date")
+        date_iso = manual_date.isoformat()
+        already = sleep[sleep["date"].astype(str).str[:10] == date_iso] if not sleep.empty else pd.DataFrame()
+        is_garmin_row = (not already.empty
+                         and "manual" not in str(already.iloc[0].get("raw_json") or ""))
+        force_override = True
+        if is_garmin_row:
+            st.warning("Ta montre a une mesure pour cette nuit-là. Si elle est fausse "
+                       "(montre déchargée en pleine nuit, mesure aberrante), tu peux la "
+                       "remplacer — ta saisie sera alors protégée : les prochaines synchros "
+                       "ne la ré-écraseront pas.")
+            force_override = st.checkbox("🔁 Remplacer la mesure de la montre par ma saisie",
+                                         key="force_override_night")
         manual_score = st.slider("Note sommeil (0-100)", 0, 100, 70, key="manual_sleep_score")
         manual_hours = st.number_input("Durée dormie (heures)", min_value=0.0, max_value=14.0,
                                        value=7.5, step=0.5, key="manual_sleep_hours")
         if st.button("💾 Enregistrer cette nuit"):
-            date_iso = manual_date.isoformat()
-            already = sleep[sleep["date"].astype(str).str[:10] == date_iso] if not sleep.empty else pd.DataFrame()
-            is_garmin_row = (not already.empty
-                             and "manual" not in str(already.iloc[0].get("raw_json") or ""))
-            if is_garmin_row:
-                st.warning("Ta montre a déjà mesuré cette nuit-là — la donnée Garmin est "
-                           "conservée (pas besoin de saisie manuelle).")
+            if is_garmin_row and not force_override:
+                st.error("Coche la case « Remplacer la mesure » pour confirmer que tu veux "
+                         "écraser la donnée de la montre.")
             else:
                 storage.upsert_sleep({
                     "date": date_iso,
@@ -1095,9 +1103,10 @@ with tab_recup:
                     "total_sleep_s": manual_hours * 3600,
                     "deep_sleep_s": None, "light_sleep_s": None,
                     "rem_sleep_s": None, "awake_s": None, "nap_s": None,
-                    "raw_json": json.dumps({"manual": True}),
+                    "raw_json": json.dumps({"manual": True, "override": bool(is_garmin_row)}),
                 }, db_path=USER_DB_PATH)
-                st.success(f"Nuit du {manual_date.strftime('%d/%m/%Y')} enregistrée !")
+                st.success(f"Nuit du {manual_date.strftime('%d/%m/%Y')} enregistrée"
+                           + (" (protégée contre les prochaines synchros) !" if is_garmin_row else " !"))
                 st.rerun()
 
     if sleep.empty and wellness.empty:

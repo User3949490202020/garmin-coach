@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Autres sports listés dans Séances + consigne yoga explicite.
+# Correction manuelle d'une nuit mal mesurée (montre déchargée), protégée des synchros.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

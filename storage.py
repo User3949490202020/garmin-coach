@@ -201,6 +201,17 @@ def update_activity_weather(activity_id: str, temp_c, feels_like_c, db_path=None
 def upsert_sleep(row: dict, db_path=None):
     row = {"nap_s": None, **row}  # tolère les anciennes sources sans sieste
     conn = get_conn(db_path)
+    # Une nuit corrigée À LA MAIN (montre déchargée, mesure aberrante...) est
+    # marquée "override" : la synchro Garmin ne doit plus l'écraser avec sa
+    # donnée incomplète. Seule une nouvelle saisie manuelle peut la remplacer.
+    incoming_manual = "manual" in str(row.get("raw_json") or "")
+    if not incoming_manual:
+        existing = conn.execute(
+            "SELECT raw_json FROM sleep WHERE date = ?", (row["date"],)
+        ).fetchone()
+        if existing and "override" in str(existing[0] or ""):
+            conn.close()
+            return
     conn.execute(
         """INSERT INTO sleep
            (date, sleep_score, total_sleep_s, deep_sleep_s, light_sleep_s, rem_sleep_s, awake_s, nap_s, raw_json)
