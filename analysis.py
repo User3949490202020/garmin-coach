@@ -1173,3 +1173,22 @@ def sport_label(type_key: str) -> str:
         if needle in tk:
             return label
     return "🤸 " + tk.replace("_", " ").capitalize() if tk else "🤸 Autre"
+
+
+# Plages d'allures cibles par zone cardiaque, en % de la vVMA estimée.
+# Repères d'entraînement classiques : Z2 = endurance fondamentale,
+# Z4 = autour du seuil, Z5 = travail de VMA.
+ZONE_PACE_PCT = {
+    "Z1": (0.58, 0.66), "Z2": (0.66, 0.76), "Z3": (0.76, 0.84),
+    "Z4": (0.84, 0.92), "Z5": (0.92, 1.00),
+}
+
+
+def zone_target_paces(vma_kmh: float) -> dict:
+    """Allure cible (min/km) par zone, sous forme de chaîne 'x:xx à x:xx/km'."""
+    if not vma_kmh or vma_kmh <= 0:
+        return {}
+    def p(pct):
+        sec = 3600 / (vma_kmh * pct)
+        return f"{int(sec // 60)}:{int(sec % 60):02d}"
+    return {z: f"{p(hi)} à {p(lo)}/km" for z, (lo, hi) in ZONE_PACE_PCT.items()}

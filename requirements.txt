@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Note de sommeil intégrée au score de récup + 4 zones de couleurs.
+# Onglet Plan (objectif chiffré + dispos + adaptation), zones enrichies, SV1/SV2.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

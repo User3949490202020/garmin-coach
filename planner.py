@@ -152,10 +152,12 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
 
 def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
                race: dict = None, horizon_weeks: int = 13,
-               predictions: dict = None) -> dict:
+               predictions: dict = None, weekly_minutes: int = None) -> dict:
     """
     Construit le plan semaine par semaine.
     `race` : {"name", "date" (Timestamp), "distance_km"} ou None.
+    `weekly_minutes` : budget temps d'entraînement hebdomadaire de l'athlète
+    (le volume en km est plafonné pour tenir dedans, à allure facile).
     Retourne {"weeks": [...], "paces": {...}, "base_km": float}.
     """
     paces = target_paces(predictions or {})
@@ -174,6 +176,14 @@ def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
     # 2 séances/semaine ne doit pas se voir prescrire le même kilométrage.
     freq_cap = max(nb_seances, 1) * 13.0
     base_km = min(base_km, freq_cap)
+
+    # Budget temps : le plan doit tenir dans les minutes hebdomadaires
+    # disponibles (converties en km à l'allure facile de l'athlète).
+    if weekly_minutes:
+        easy_pace_min = (paces.get("facile") or 390) / 60  # défaut 6:30/km
+        time_cap = weekly_minutes / easy_pace_min
+        freq_cap = min(freq_cap, time_cap)
+        base_km = min(base_km, time_cap)
 
     today = pd.Timestamp.now().normalize()
     current_week_start = today - pd.Timedelta(days=today.weekday())
@@ -222,3 +232,54 @@ def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
         })
 
     return {"weeks": weeks, "paces": paces, "base_km": base_km}
+
+
+def _fmt_time(seconds: float) -> str:
+    seconds = int(round(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h{m:02d}" if h else f"{m}min{s:02d}"
+
+
+def assess_objective(predictions: dict, distance_km: float, target_time_s: float,
+                     elevation_gain: float = 0, weeks_to_race: int = None) -> dict:
+    """
+    Verdict du coach sur un objectif chiffré : compare le temps visé à la
+    prédiction Riegel issue des données réelles, ajustée du dénivelé
+    (~+1 min par 100 m de D+). Retourne {niveau: vert/orange/rouge/inconnu, texte}.
+    """
+    if not predictions or "reference" not in predictions:
+        return {"niveau": "inconnu",
+                "texte": "Pas encore assez de données récentes pour évaluer cet objectif — "
+                         "synchronise régulièrement et reviens dans quelques semaines."}
+    ref = predictions["reference"]
+    pred_flat = ref["temps_s"] * (distance_km / ref["distance_km"]) ** 1.06
+    deniv_penalty = (elevation_gain or 0) * 0.6  # ≈ +1 min / 100 m D+
+    pred_adj = pred_flat + deniv_penalty
+    margin_pct = (target_time_s - pred_adj) / pred_adj * 100  # + = plus lent que prédit
+
+    deniv_note = (f" (dont ~{_fmt_time(deniv_penalty)} de pénalité pour les "
+                  f"{elevation_gain:.0f} m de D+)") if elevation_gain else ""
+    horizon = f" d'ici la course ({weeks_to_race} semaines)" if weeks_to_race else ""
+
+    if margin_pct >= 5:
+        return {"niveau": "vert",
+                "texte": f"✅ **Objectif prudent.** Tes données récentes prédisent "
+                         f"~**{_fmt_time(pred_adj)}**{deniv_note} : tu as de la marge. "
+                         "Si la prépa se passe bien, tu pourras viser un cran plus haut."}
+    if margin_pct >= -3:
+        return {"niveau": "vert",
+                "texte": f"✅ **Objectif cohérent** avec ta forme actuelle (prédiction "
+                         f"~**{_fmt_time(pred_adj)}**{deniv_note}). Exactement le bon niveau "
+                         "de défi : ça se jouera sur la régularité de la prépa."}
+    if margin_pct >= -8:
+        return {"niveau": "orange",
+                "texte": f"🟠 **Ambitieux mais jouable** : tu vises {abs(margin_pct):.0f} % plus "
+                         f"vite que ta prédiction actuelle (~**{_fmt_time(pred_adj)}**{deniv_note}). "
+                         f"Une prépa sérieuse{horizon} peut combler cet écart — le coach IA "
+                         "t'aidera à suivre la progression."}
+    return {"niveau": "rouge",
+            "texte": f"🔴 **Très ambitieux à cette échéance** : {abs(margin_pct):.0f} % sous ta "
+                     f"prédiction actuelle (~**{_fmt_time(pred_adj)}**{deniv_note}). L'objectif "
+                     f"n'est pas interdit, mais un palier intermédiaire (~{_fmt_time(pred_adj * 0.97)}) "
+                     "serait plus réaliste — quitte à réviser à la hausse en cours de prépa."}

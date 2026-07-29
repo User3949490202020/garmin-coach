@@ -20,6 +20,7 @@ import analysis
 import coach_agent
 import gpx_utils
 import sync as sync_module
+import planner
 from providers.garmin import GarminProvider
 from providers import strava
 
@@ -95,7 +96,7 @@ ENV_EMAIL = os.getenv("GARMIN_EMAIL")
 ENV_PASSWORD = os.getenv("GARMIN_PASSWORD")
 LOCAL_MODE = bool(ENV_EMAIL and ENV_PASSWORD)
 
-st.title("🏃 Allure")
+st.title("🏃 Allure 🇫🇷")
 st.markdown("#### Le meilleur coach, c'est toi.")
 st.caption("Tes données parlent — ton coach IA les traduit. Il connaît chacune de tes foulées, "
            "chaque nuit de sommeil, chaque coup de mou : pose-lui **n'importe quelle question**, "
@@ -464,9 +465,9 @@ HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
 # Karvonen (Z1-Z5 en % de réserve cardiaque). Sans données (Strava), défaut 55.
 HR_REST = analysis.current_rest_hr(wellness)
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_vma, tab_sante = st.tabs(
+tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_plan, tab_vma, tab_sante = st.tabs(
     ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
-     "📈 Charge & Risque", "🚀 VMA", "🩺 Santé"]
+     "📈 Charge & Risque", "🗓️ Plan", "🚀 VMA", "🩺 Santé"]
 )
 
 # ----------------------------------------------------------------------
@@ -619,7 +620,8 @@ with tab_coach:
         # --- Questions prêtes à l'emploi : montrer qu'on peut TOUT lui demander ---
         _suggestions = ["🔍 Analyse ma semaine", "📅 Je fais quoi demain ?",
                         "😮‍💨 Pourquoi je suis fatigué en ce moment ?",
-                        "⚡ Prépare ma prochaine séance de VMA"]
+                        "⚡ Prépare ma prochaine séance de VMA",
+                        "🛋️ Grosse flemme aujourd'hui : trouve-moi une séance qui me fera quand même sortir"]
         _sq_cols = st.columns(2)
         _clicked_q = None
         for _i, _q in enumerate(_suggestions):
@@ -1063,6 +1065,23 @@ with tab_seances:
                     st.success(f"🟢 En endurance fondamentale, ta foulée ({f_row.iloc[0]['foulee_m']:.2f} m, "
                                f"soit {ratio:.0%} de ta taille) est dans une plage saine.")
 
+            with st.expander("🏃 Exercices pour améliorer ta foulée (gammes)"):
+                st.markdown(
+                    "Les **gammes** sont LE travail technique du coureur — 10 minutes après "
+                    "l'échauffement, 1 à 2 fois par semaine :\n\n"
+                    "- **Montées de genoux** (3 × 20 m) : genoux hauts, appuis brefs et toniques "
+                    "sous le bassin — apprend à poser le pied SOUS toi, pas devant.\n"
+                    "- **Talons-fesses** (3 × 20 m) : cycle de jambe rapide, cadence élevée — "
+                    "délie la foulée arrière.\n"
+                    "- **Foulées bondissantes** (2 × 20 m) : pousse complète et gainage — "
+                    "renforce la propulsion sans allonger devant.\n\n"
+                    "En vidéo (coachs français) :\n"
+                    "- [10 exercices de gammes — technique de course]"
+                    "(https://www.youtube.com/watch?v=uRaF82C-n1g)\n"
+                    "- [20 exercices pour améliorer ta foulée]"
+                    "(https://www.youtube.com/watch?v=ooqyElwcp1o)"
+                )
+
 
 
 # ----------------------------------------------------------------------
@@ -1353,6 +1372,168 @@ with tab_charge:
 
 
 # ----------------------------------------------------------------------
+# Plan — programme personnalisé : objectif chiffré, dispos, adaptation
+# ----------------------------------------------------------------------
+with tab_plan:
+    st.subheader("🗓️ Ton plan d'entraînement")
+    st.caption("Construit sur TES données (volume réel, allures dérivées de ta forme), encadré "
+               "par TON objectif et TES disponibilités — et adapté à ta forme du jour.")
+
+    # --- 1. L'objectif de course ---
+    _saved_race = storage.read_text_note("plan_race", db_path=USER_DB_PATH)
+    _race = json.loads(_saved_race[0]) if _saved_race and _saved_race[0] else {}
+    with st.expander("🎯 Ma course objectif", expanded=not _race):
+        _distances = {"5 km": 5.0, "10 km": 10.0, "Semi-marathon": 21.1,
+                      "Marathon": 42.195, "Autre distance": None}
+        rc1, rc2 = st.columns(2)
+        race_name = rc1.text_input("Nom de la course", value=_race.get("name", ""),
+                                   placeholder="Ex : 10 km de Montpellier")
+        _dist_keys = list(_distances.keys())
+        _saved_key = _race.get("dist_key", "10 km")
+        race_dist_key = rc2.selectbox("Distance", _dist_keys,
+                                      index=_dist_keys.index(_saved_key)
+                                      if _saved_key in _dist_keys else 1)
+        if _distances[race_dist_key] is None:
+            race_km = st.number_input("Distance exacte (km)", 1.0, 200.0,
+                                      float(_race.get("distance_km", 15.0)), step=0.5)
+        else:
+            race_km = _distances[race_dist_key]
+        rc3, rc4 = st.columns(2)
+        race_date = rc3.date_input(
+            "Date de la course",
+            value=(pd.to_datetime(_race["date"]).date() if _race.get("date")
+                   else dt.date.today() + dt.timedelta(weeks=10)),
+            min_value=dt.date.today())
+        race_deniv = rc4.number_input("Dénivelé positif (m)", 0, 12000,
+                                      int(_race.get("elevation_gain", 0)), step=50)
+        rc5, rc6 = st.columns(2)
+        obj_h = rc5.number_input("Temps visé — heures", 0, 30,
+                                 int(_race.get("target_time_s", 3600)) // 3600)
+        obj_m = rc6.number_input("Temps visé — minutes", 0, 59,
+                                 (int(_race.get("target_time_s", 3600)) % 3600) // 60)
+        if st.button("💾 Enregistrer mon objectif de course"):
+            storage.save_text_note("plan_race", json.dumps({
+                "name": race_name.strip(), "dist_key": race_dist_key,
+                "distance_km": race_km, "date": race_date.isoformat(),
+                "elevation_gain": race_deniv,
+                "target_time_s": obj_h * 3600 + obj_m * 60,
+            }), db_path=USER_DB_PATH)
+            st.success("Objectif enregistré !")
+            st.rerun()
+
+    plan_preds = analysis.predict_race_times(activities, months=6) if not activities.empty else {}
+
+    # --- 2. Le verdict du coach sur l'objectif ---
+    plan_race = None
+    if _race.get("date"):
+        _weeks_left = max(int((pd.Timestamp(_race["date"]) - pd.Timestamp.now()).days / 7), 0)
+        plan_race = {"name": _race.get("name") or "Course objectif",
+                     "date": pd.Timestamp(_race["date"]),
+                     "distance_km": _race.get("distance_km", 10.0)}
+        verdict = planner.assess_objective(
+            plan_preds, _race.get("distance_km", 10.0), _race.get("target_time_s", 3600),
+            elevation_gain=_race.get("elevation_gain", 0), weeks_to_race=_weeks_left)
+        _obj_label = (f"**{plan_race['name']}** — {_race.get('distance_km'):.1f} km, "
+                      f"{_race.get('elevation_gain', 0)} m D+, objectif "
+                      f"{planner._fmt_time(_race.get('target_time_s', 0))}, "
+                      f"dans {_weeks_left} semaine(s)")
+        st.markdown(f"🎯 {_obj_label}")
+        {"vert": st.success, "orange": st.warning,
+         "rouge": st.error, "inconnu": st.info}[verdict["niveau"]](verdict["texte"])
+
+    # --- 3. Les disponibilités (persistées) ---
+    st.markdown("**⏱️ Tes disponibilités**")
+    saved_nb = storage.read_manual_note("plan_nb_seances", db_path=USER_DB_PATH)
+    saved_day = storage.read_manual_note("plan_longrun_day", db_path=USER_DB_PATH)
+    saved_min = storage.read_manual_note("plan_weekly_min", db_path=USER_DB_PATH)
+    dc1, dc2, dc3 = st.columns(3)
+    plan_nb = dc1.slider("Séances de course / semaine", 1, 7,
+                         int(saved_nb[0]) if saved_nb else 3, key="plan_nb")
+    plan_min = dc2.number_input("Minutes d'entraînement / semaine", 60, 1200,
+                                int(saved_min[0]) if saved_min else 240, step=30,
+                                key="plan_min")
+    plan_day = dc3.selectbox("Jour de la sortie longue", list(range(7)),
+                             index=int(saved_day[0]) if saved_day else 6,
+                             format_func=lambda i: planner.FR_DAYS[i], key="plan_day")
+    if not saved_nb or int(saved_nb[0]) != plan_nb:
+        storage.save_manual_note("plan_nb_seances", float(plan_nb), db_path=USER_DB_PATH)
+    if not saved_min or int(saved_min[0]) != plan_min:
+        storage.save_manual_note("plan_weekly_min", float(plan_min), db_path=USER_DB_PATH)
+    if not saved_day or int(saved_day[0]) != plan_day:
+        storage.save_manual_note("plan_longrun_day", float(plan_day), db_path=USER_DB_PATH)
+
+    if activities.empty:
+        st.info("Synchronise tes séances pour générer ton plan.")
+    else:
+        plan = planner.build_plan(activities, plan_nb, plan_day, race=plan_race,
+                                  predictions=plan_preds, weekly_minutes=plan_min)
+
+        # --- 4. Adaptation à la forme du jour ---
+        _rec_today = None
+        if not wellness.empty:
+            _rec_df = analysis.recovery_score(wellness, sleep)
+            if not _rec_df.empty and _rec_df["recovery_score"].notna().any():
+                _rec_today = _rec_df["recovery_score"].dropna().iloc[-1]
+        if _rec_today is not None:
+            if _rec_today < 35:
+                st.error(f"🔴 **Forme du jour : {_rec_today:.0f}/100.** Le plan s'adapte : "
+                         "remplace la séance prévue aujourd'hui par un footing Z1 très court "
+                         "ou un repos complet — la séance manquée se rattrape, pas la blessure.")
+            elif _rec_today < 50:
+                st.warning(f"🟠 **Forme du jour : {_rec_today:.0f}/100.** Si une séance de "
+                           "qualité est prévue aujourd'hui, allège-la (moins de fractions, "
+                           "allure haute de fourchette) ou décale-la à demain.")
+            else:
+                st.success(f"🟢 **Forme du jour : {_rec_today:.0f}/100.** Feu vert pour la "
+                           "séance prévue.")
+
+        # --- 5. Allures cibles + semaines détaillées ---
+        acol = st.columns(4)
+        for col, (label, key) in zip(acol, [("🟢 Facile", "facile"), ("🟠 Longue", "longue"),
+                                            ("🔴 Seuil", "seuil"), ("🔴 VMA", "vma")]):
+            p = plan["paces"][key]
+            col.metric(label, f"{int(p // 60)}:{int(p % 60):02d}/km" if p else "sensations")
+
+        def _plan_week_detail(week, title, expanded=True):
+            with st.expander(title, expanded=expanded):
+                st.markdown(f"**Type : {week['type']}** — {week['km']:.0f} km sur "
+                            f"{week['nb_seances']} séance(s)")
+                rows = []
+                for s in week["sessions"]:
+                    day_date = week["week_start"] + pd.Timedelta(days=s["jour"])
+                    rows.append({
+                        "Jour": f"{planner.FR_DAYS[s['jour']]} {day_date.strftime('%d/%m')}",
+                        "Séance": f"{s['couleur']} {s['type']}",
+                        "Distance": f"{s['km']:.0f} km",
+                        "Allure": s["allure"],
+                        "Contenu": s["contenu"],
+                    })
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+        week_now, week_next = plan["weeks"][0], plan["weeks"][1]
+        done = activities[activities["date"] >= week_now["week_start"]]
+        if not done.empty:
+            st.caption(f"📍 Déjà couru cette semaine : **{len(done)} séance(s), "
+                       f"{done['distance_km'].sum():.1f} km** sur les {week_now['km']:.0f} km prévus.")
+        _plan_week_detail(week_now, f"📅 Semaine en cours (du {week_now['week_start'].strftime('%d/%m')})")
+        _plan_week_detail(week_next, f"⏭️ Semaine prochaine (du {week_next['week_start'].strftime('%d/%m')})")
+
+        overview = pd.DataFrame([{
+            "Semaine du": w["week_start"].strftime("%d/%m"),
+            "Type": {"Progression": "📈 Progression", "Stabilité": "➡️ Stabilité",
+                     "Récupération": "😴 Récupération", "Affûtage": "🪶 Affûtage",
+                     "Course": "🏁 Course"}.get(w["type"], w["type"]),
+            "Volume": f"{w['km']:.0f} km",
+            "Séances": w["nb_seances"],
+        } for w in plan["weeks"]])
+        st.markdown("**Vue d'ensemble jusqu'à la course :**" if plan_race
+                    else "**Vue d'ensemble des ~3 prochains mois :**")
+        st.dataframe(overview, width='stretch', hide_index=True)
+        st.caption("⚠️ Plan indicatif recalculé en continu sur tes données : il ne remplace ni "
+                   "l'écoute de ton corps, ni le Coach IA (qui connaît ce plan ET ta forme du "
+                   "moment — demande-lui d'ajuster une séance quand tu doutes).")
+
+# ----------------------------------------------------------------------
 # VMA — vitesse maximale aérobie : estimation + analyse des séances
 # ----------------------------------------------------------------------
 with tab_vma:
@@ -1392,6 +1573,42 @@ with tab_vma:
                                    range=[int(zones_df["bpm_min"].min()) - 3, HR_MAX + 3]),
                         margin=dict(t=10, b=10))
     st.plotly_chart(mobile_friendly(fig_z), width='stretch', config=PLOTLY_CONFIG)
+
+    # --- Table zones → allures cibles + seuils ventilatoires SV1/SV2 ---
+    _vma_for_paces = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX, months=12)
+    _zone_paces = (analysis.zone_target_paces(_vma_for_paces["vma_kmh"].iloc[-1])
+                   if not _vma_for_paces.empty else {})
+    _zone_usage = {
+        "Z1": "Récupération active, lendemains de séances dures",
+        "Z2": "Endurance fondamentale — l'essentiel de ton volume",
+        "Z3": "Tempo soutenu (à doser : ni facile ni vraiment dur)",
+        "Z4": "Seuil — allure semi/10 km, fractions longues",
+        "Z5": "VMA — fractions courtes, développement du moteur",
+    }
+    zones_table = pd.DataFrame({
+        "Zone": zones_df["zone"] + " · " + zones_df["label"],
+        "FC (bpm)": zones_df["bpm_min"].astype(str) + " – " + zones_df["bpm_max"].astype(str),
+        "Allure cible*": [_zone_paces.get(z, "—") for z in zones_df["zone"]],
+        "À quoi ça sert": [_zone_usage[z] for z in zones_df["zone"]],
+    })
+    st.dataframe(zones_table, hide_index=True, width='stretch')
+    if _zone_paces:
+        st.caption("*Allures estimées à partir de ta vVMA actuelle — des repères d'entraînement, "
+                   "pas des consignes absolues (le terrain et la chaleur les font bouger).")
+
+    _sv1 = int(zones_df.loc[zones_df["zone"] == "Z2", "bpm_max"].iloc[0])
+    _sv2 = int(zones_df.loc[zones_df["zone"] == "Z4", "bpm_max"].iloc[0])
+    st.markdown(f"**🫁 Tes deux seuils ventilatoires (repères d'entraînement)**")
+    st.markdown(
+        f"- **SV1 (seuil aérobie) ≈ {_sv1} bpm** — la frontière Z2/Z3 : en dessous, tu peux "
+        "parler en phrases entières. C'est SOUS ce seuil que se construit l'endurance — "
+        "~80 % de ton volume devrait y rester.\n"
+        f"- **SV2 (seuil anaérobie) ≈ {_sv2} bpm** — la frontière Z4/Z5 : l'intensité maximale "
+        "que tu peux tenir ~une heure. S'entraîner juste sous SV2 (Z4) fait monter ton allure "
+        "de course ; au-dessus, tu bascules dans le rouge (VMA)."
+    )
+    st.caption("Estimations dérivées de tes zones Karvonen — un test d'effort en labo reste la "
+               "seule mesure exacte des seuils ventilatoires.")
     st.divider()
 
     if activities.empty:
