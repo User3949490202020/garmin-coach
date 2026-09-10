@@ -381,12 +381,12 @@ with st.sidebar:
 
     # --- Synchronisation automatique à l'ouverture ---
     # Une seule tentative par session de navigation, et uniquement si la
-    # dernière synchro date de plus de 6 h : inutile de solliciter Garmin/
+    # dernière synchro date de plus de 48 h : inutile de solliciter Garmin/
     # Strava à chaque rechargement (risque de limitation 429 côté Garmin).
     if not st.session_state.get("auto_sync_done") and not st.session_state.get("mfa_pending"):
         st.session_state.auto_sync_done = True
         _last = storage.read_manual_note("last_sync_ts", db_path=USER_DB_PATH)
-        _stale = _last is None or (dt.datetime.now().timestamp() - _last[0]) > 6 * 3600
+        _stale = _last is None or (dt.datetime.now().timestamp() - _last[0]) > 48 * 3600
         if _stale:
             with st.spinner("🔄 Synchronisation automatique en cours..."):
                 try:
@@ -431,7 +431,8 @@ with st.sidebar:
     if _last_sync:
         _age_h = (dt.datetime.now().timestamp() - _last_sync[0]) / 3600
         st.caption(f"Dernière synchro : il y a {'moins d’1 h' if _age_h < 1 else f'{int(_age_h)} h'} "
-                   "— synchro auto à l'ouverture si plus de 6 h.")
+                   "— synchro auto à l'ouverture si plus de 48 h. Le bouton reste là "
+                   "pour synchroniser à la demande.")
 
     st.divider()
     st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données.")
@@ -588,25 +589,32 @@ with tab_coach:
         # Généré une fois par jour et par athlète (mis en cache), il accueille
         # l'utilisateur avec une lecture à chaud de SA forme et de SA journée
         # idéale — la démonstration immédiate de ce que le coach sait faire.
+        # Le brief ne se génère plus tout seul à l'ouverture : l'athlète le
+        # demande d'un bouton (généré une fois par jour, puis réaffiché).
         _brief_key = f"brief_{dt.date.today().isoformat()}"
         _brief = storage.read_text_note(_brief_key, db_path=USER_DB_PATH)
         if not _brief:
-            with st.spinner("🎙️ Ton coach prépare ton brief du jour..."):
-                try:
-                    _brief_txt = coach_agent.one_shot_advice(
-                        context_summary,
-                        focus="Rédige le BRIEF DU JOUR de l'athlète : 4 phrases maximum, ton "
-                              "complice et direct. 1) Son état de forme du jour (récup, HRV, "
-                              "sommeil d'hier). 2) Ce que ça implique pour aujourd'hui (séance "
-                              "conseillée ou repos, avec allure/zone si pertinent). 3) Un clin "
-                              "d'œil à sa progression ou son objectif. Pas de titre, pas de "
-                              "liste : un vrai petit message de coach qui connaît son athlète.",
-                        api_key=own_gemini_key,
-                    )
-                    storage.save_text_note(_brief_key, _brief_txt, db_path=USER_DB_PATH)
-                    _brief = (_brief_txt, None)
-                except Exception:
-                    _brief = None  # pas de brief aujourd'hui, pas grave
+            if st.button("🎙️ Recevoir mon brief du jour", type="primary"):
+                with st.spinner("🎙️ Ton coach prépare ton brief du jour..."):
+                    try:
+                        _brief_txt = coach_agent.one_shot_advice(
+                            context_summary,
+                            focus="Rédige le BRIEF DU JOUR de l'athlète : 4 phrases maximum, ton "
+                                  "complice et direct. 1) Son état de forme du jour (récup, HRV, "
+                                  "sommeil d'hier). 2) Ce que ça implique pour aujourd'hui (séance "
+                                  "conseillée ou repos, avec allure/zone si pertinent). 3) Un clin "
+                                  "d'œil à sa progression ou son objectif. Pas de titre, pas de "
+                                  "liste : un vrai petit message de coach qui connaît son athlète.",
+                            api_key=own_gemini_key,
+                        )
+                        storage.save_text_note(_brief_key, _brief_txt, db_path=USER_DB_PATH)
+                        _brief = (_brief_txt, None)
+                    except Exception:
+                        st.warning("Le coach n'est pas disponible à l'instant — réessaie dans "
+                                   "une minute.")
+            else:
+                st.caption("Ton coach lit tes dernières données et te dit quoi faire "
+                           "aujourd'hui — un brief par jour, à la demande.")
         if _brief:
             st.info(f"🎙️ **Le brief du jour de ton coach**\n\n{_brief[0]}")
 
@@ -687,6 +695,25 @@ with tab_strava:
 
         st.subheader("Distance par semaine")
         st.caption("Les barres montrent chaque semaine, la ligne orange ta moyenne glissante sur 4 semaines.")
+        with st.expander("💡 Pourquoi le volume hebdo est TON indicateur n°1"):
+            st.markdown(
+                "**Le volume, c'est le socle : aucun chrono ne se construit sans lui.**\n\n"
+                "- 🏗️ **C'est le volume qui fabrique le moteur.** Courir régulièrement — même "
+                "lentement — développe le cœur, les capillaires et les tendons : c'est ce qui te "
+                "permet de TENIR ton allure le jour de la course, pas seulement de l'atteindre "
+                "sur 2 km. Un 10 km se prépare autour de 25-40 km/semaine, un semi autour de "
+                "40-55, un marathon au-delà de 50 : pas par dogme, mais parce qu'en dessous, le "
+                "corps n'a simplement pas eu le temps de s'adapter à la durée de l'épreuve.\n"
+                "- 📈 **La ligne orange (moyenne 4 semaines) compte plus que chaque barre** : "
+                "une grosse semaine isolée ne construit rien, une moyenne qui monte doucement "
+                "construit tout. C'est aussi elle qui protège : augmenter de plus de ~10 % par "
+                "semaine est le raccourci classique vers la blessure.\n"
+                "- 🎯 **Le lien avec ton objectif** : à allure égale, celui qui a couru 45 km/sem "
+                "pendant 8 semaines bat presque toujours celui qui a fait 25 — même si leurs "
+                "séances « dures » étaient identiques. Si tu as renseigné ta course dans "
+                "l'onglet 🗓️ Plan, le programme fixe justement ce volume cible semaine par "
+                "semaine, en partant de TA moyenne actuelle."
+            )
         fig = go.Figure()
         fig.add_trace(go.Bar(x=weekly["week_start"], y=weekly["distance_km"], name="Distance semaine",
                               marker_color="royalblue"))
@@ -895,12 +922,19 @@ with tab_seances:
                 })
                 st.dataframe(autres_df, hide_index=True, width='stretch')
 
-        st.subheader("🌡️ Indice de forme ajusté à la météo")
-        adj = analysis.weather_adjusted_pace(activities)
-        if adj.empty:
+        # ⏸️ Indice météo mis en pause (retour testeurs : graphique peu lisible).
+        # Tout le code est conservé : repasser SHOW_METEO_INDEX à True pour le
+        # réactiver (idéalement après une refonte plus lisible).
+        SHOW_METEO_INDEX = False
+        adj = analysis.weather_adjusted_pace(activities) if SHOW_METEO_INDEX else pd.DataFrame()
+        if not SHOW_METEO_INDEX:
+            pass
+        elif adj.empty:
+            st.subheader("🌡️ Indice de forme ajusté à la météo")
             st.caption("Pas encore assez de séances avec météo enregistrée pour calculer cet indice "
                        "(synchronise à nouveau pour en récupérer davantage).")
         else:
+            st.subheader("🌡️ Indice de forme ajusté à la météo")
             st.caption(
                 "La chaleur augmente le coût cardiovasculaire de la course : à effort égal (même FC), "
                 "tu cours plus lentement quand il fait chaud. Cette courbe ramène toutes tes séances à "
@@ -966,6 +1000,27 @@ with tab_seances:
         st.caption("La cadence (pas/minute) est un marqueur de technique : une dérive vers le bas "
                    "accompagne souvent la fatigue ou une foulée qui se dégrade. On ne vise pas "
                    "180 à tout prix — on surveille **ta** tendance.")
+        with st.expander("💡 À quoi ça sert, concrètement ?"):
+            st.markdown(
+                "**La cadence est le réglage technique le plus simple à actionner — et celui "
+                "qui protège le plus.**\n\n"
+                "- 🦵 **Moins de blessures.** À vitesse égale, une cadence trop basse = des pas "
+                "trop longs = tu atterris talon en avant, jambe tendue, loin devant ton corps. "
+                "Chaque pas devient un petit freinage qui remonte dans les tibias, les genoux et "
+                "les hanches (périostite, syndrome de l'essuie-glace…). Des pas un peu plus "
+                "fréquents et plus courts posent le pied **sous** toi : l'impact chute.\n"
+                "- ⚡ **Moins d'énergie gaspillée.** Freiner à chaque pas, c'est de la vitesse "
+                "détruite qu'il faut re-produire au pas suivant. Une cadence adaptée à ton "
+                "gabarit, c'est du « gratuit » : même chrono, moins de fatigue en fin de course.\n"
+                "- 📉 **Un détecteur de fatigue.** Regarde ta courbe : si ta tendance baisse "
+                "sur plusieurs semaines sans raison, c'est souvent la foulée qui s'affaisse "
+                "(fatigue accumulée, baisse de tonus) — un signal d'alerte avant même que les "
+                "chronos ne se dégradent.\n\n"
+                "**Comment l'améliorer ?** Pas en forçant 180 pas/min du jour au lendemain : "
+                "vise ta fourchette personnalisée ci-dessous (calculée sur ta taille), "
+                "augmente de ~5 pas/min max à la fois sur tes footings faciles, et fais des "
+                "gammes (voir les exercices dans la section foulée)."
+            )
         cad = analysis.cadence_trend(activities, months=12)
         if cad.empty:
             st.caption("Pas de données de cadence sur la période.")
