@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Persistance cloud, onglet Progression, qualité espacée, récup recalibrée.
+# Persistance cloud (clés sb_secret), onglet Progression, qualité espacée, récup recalibrée.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

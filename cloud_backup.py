@@ -84,7 +84,9 @@ def backup(db_path, min_interval_s: int = 90, force: bool = False) -> bool:
             data = f.read()
         r = requests.post(
             _object_url(url, path.name), data=data,
-            headers={"Authorization": f"Bearer {key}",
+            # "apikey" + "Authorization" : compatibles anciennes clés (JWT
+            # service_role) ET nouvelles clés Supabase (sb_secret_...).
+            headers={"Authorization": f"Bearer {key}", "apikey": key,
                      "Content-Type": "application/octet-stream",
                      "x-upsert": "true"},
             timeout=_TIMEOUT,
@@ -112,7 +114,7 @@ def restore_if_missing(db_path) -> bool:
     url, key = conf
     try:
         r = requests.get(_object_url(url, path.name),
-                         headers={"Authorization": f"Bearer {key}"},
+                         headers={"Authorization": f"Bearer {key}", "apikey": key},
                          timeout=_TIMEOUT)
         if r.status_code == 200 and r.content:
             path.parent.mkdir(exist_ok=True)
