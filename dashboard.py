@@ -724,26 +724,54 @@ with tab_progress:
     _saved_ef = storage.read_manual_note("ressenti_ef_pace_s", db_path=USER_DB_PATH)
     _saved_sv2 = storage.read_manual_note("ressenti_sv2_pace_s", db_path=USER_DB_PATH)
 
-    def _pace_input(label, help_txt, saved, key, default_s):
-        cur = int(saved[0]) if saved else default_s
-        c1, c2 = st.columns(2)
-        mn = c1.number_input(f"{label} — min", 2, 9, cur // 60, key=f"{key}_mn", help=help_txt)
-        sc = c2.number_input(f"{label} — s", 0, 59, cur % 60, step=5, key=f"{key}_sc")
-        return int(mn * 60 + sc)
+    def _fmt_pace_txt(saved):
+        if not saved:
+            return ""
+        sec = int(saved[0])
+        return f"{sec // 60}:{sec % 60:02d}"
 
-    ef_in = _pace_input("Allure EF (tu peux parler en phrases entières)",
-                        "L'allure que tu tiendrais des heures en discutant : le test de la "
-                        "parole. Si tu hésites entre deux, prends la plus lente.",
-                        _saved_ef, "ressenti_ef", 360)
-    sv2_in = _pace_input("Allure seuil (à fond ~1 h, 3-4 mots max d'affilée)",
-                         "L'allure maximale que tu tiendrais environ une heure en course : "
-                         "au-dessus, ça bascule vite dans le rouge.",
-                         _saved_sv2, "ressenti_sv2", 280)
+    def _parse_pace_txt(txt):
+        """Accepte 5:30, 5.30, 5,30 ou 5'30 — renvoie des s/km, ou None."""
+        txt = (txt or "").strip().replace(",", ":").replace(".", ":").replace("'", ":")
+        if not txt:
+            return None
+        parts = txt.split(":")
+        try:
+            mn = int(parts[0])
+            sc = int(parts[1]) if len(parts) > 1 and parts[1] != "" else 0
+        except (ValueError, IndexError):
+            return None
+        if not (2 <= mn <= 12 and 0 <= sc < 60):
+            return None
+        return mn * 60 + sc
+
+    rc1, rc2 = st.columns(2)
+    ef_txt = rc1.text_input(
+        "Allure max EF — tu peux encore parler (ex : 5:30)",
+        value=_fmt_pace_txt(_saved_ef), placeholder="5:30", key="ressenti_ef_txt",
+        help="La limite haute de ton endurance fondamentale : jusqu'à cette allure tu "
+             "tiens une conversation en phrases entières. Si tu hésites entre deux, "
+             "prends la plus lente.")
+    sv2_txt = rc2.text_input(
+        "Seuil 2 max ressenti en ce moment (ex : 4:00)",
+        value=_fmt_pace_txt(_saved_sv2), placeholder="4:00", key="ressenti_sv2_txt",
+        help="L'allure au-dessus de laquelle ça bascule : la dérive cardiaque arrive "
+             "avant même d'être sur de la VMA. Tenable ~1 h à fond, 3-4 mots max "
+             "d'affilée. « En ce moment » : réponds sur ta forme actuelle, pas "
+             "sur tes records.")
     if st.button("💾 Enregistrer mes allures ressenties"):
-        storage.save_manual_note("ressenti_ef_pace_s", float(ef_in), db_path=USER_DB_PATH)
-        storage.save_manual_note("ressenti_sv2_pace_s", float(sv2_in), db_path=USER_DB_PATH)
-        st.success("Ancres enregistrées — tes zones et ton plan s'alignent sur ton ressenti.")
-        st.rerun()
+        _ef_s, _sv2_s = _parse_pace_txt(ef_txt), _parse_pace_txt(sv2_txt)
+        if _ef_s is None or _sv2_s is None:
+            st.error("Format non reconnu — écris ton allure en minutes:secondes "
+                     "par km, ex : 5:30 ou 4:05.")
+        elif _sv2_s >= _ef_s:
+            st.error("Ton seuil doit être plus RAPIDE que ton EF (ex : EF 5:30, "
+                     "seuil 4:00) — vérifie tes deux valeurs.")
+        else:
+            storage.save_manual_note("ressenti_ef_pace_s", float(_ef_s), db_path=USER_DB_PATH)
+            storage.save_manual_note("ressenti_sv2_pace_s", float(_sv2_s), db_path=USER_DB_PATH)
+            st.success("Ancres enregistrées — tes zones et ton plan s'alignent sur ton ressenti.")
+            st.rerun()
 
     # Confrontation ressenti vs modèle (pédagogie, pas sanction)
     _vma_prog = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX, months=12) \
@@ -828,10 +856,8 @@ with tab_progress:
     st.caption("📚 L'approche de cet onglet : zones ancrées sur la perception de l'effort "
                "(test de la parole) plutôt que sur des seuils de laboratoire, répartition "
                "pyramidale du volume, et dominante choisie selon TON facteur limitant. "
-               "Pour creuser : [guide lactate & endurance (Ibex Outdoor)]"
-               "(https://www.ibexoutdoor.fr/post/guide-lactate-endurance) · "
-               "[l'étude sur l'entraînement guidé par le ressenti (PubMed)]"
-               "(https://pubmed.ncbi.nlm.nih.gov/33118479/).")
+               "Pour creuser : [l'étude sur l'entraînement guidé par le "
+               "ressenti (PubMed)](https://pubmed.ncbi.nlm.nih.gov/33118479/).")
 
 # ----------------------------------------------------------------------
 # Stats Strava
