@@ -392,7 +392,14 @@ with st.sidebar:
     if not st.session_state.get("auto_sync_done") and not st.session_state.get("mfa_pending"):
         st.session_state.auto_sync_done = True
         _last = storage.read_manual_note("last_sync_ts", db_path=USER_DB_PATH)
-        _stale = _last is None or (dt.datetime.now().timestamp() - _last[0]) > 48 * 3600
+        # Fraîcheur : synchro auto si plus de 24 h, OU à la première ouverture
+        # de la journée (après 5 h) — pour que le brief du matin repose sur la
+        # nuit DERNIÈRE, même si on avait synchronisé la veille au soir.
+        _now_dt = dt.datetime.now()
+        _last_dt = dt.datetime.fromtimestamp(_last[0]) if _last else None
+        _stale = (_last_dt is None
+                  or (_now_dt - _last_dt).total_seconds() > 24 * 3600
+                  or (_last_dt.date() < _now_dt.date() and _now_dt.hour >= 5))
         if _stale:
             with st.spinner("🔄 Synchronisation automatique en cours..."):
                 try:
@@ -439,8 +446,8 @@ with st.sidebar:
     if _last_sync:
         _age_h = (dt.datetime.now().timestamp() - _last_sync[0]) / 3600
         st.caption(f"Dernière synchro : il y a {'moins d’1 h' if _age_h < 1 else f'{int(_age_h)} h'} "
-                   "— synchro auto à l'ouverture si plus de 48 h. Le bouton reste là "
-                   "pour synchroniser à la demande.")
+                   "— synchro auto à la première ouverture de la journée (ta nuit est "
+                   "toujours à bord). Le bouton reste là pour synchroniser à la demande.")
 
     if cloud_backup.is_active():
         st.caption("☁️ Sauvegarde cloud active : tes données et réglages survivent "
