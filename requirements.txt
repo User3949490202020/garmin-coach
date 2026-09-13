@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Onglet Plan (objectif chiffré + dispos + adaptation), zones enrichies, SV1/SV2.
+# Persistance cloud, onglet Progression, qualité espacée, récup recalibrée.
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

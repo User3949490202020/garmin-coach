@@ -103,6 +103,28 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
     easy_slots = max(n - 1 - quality_slots, 0)
     easy_km = round(remaining / easy_slots, 1) if easy_slots else 0
 
+    # Placement des séances de qualité : JAMAIS deux jours durs consécutifs
+    # (la sortie longue compte comme un jour dur), la semaine étant cyclique
+    # (dimanche et lundi sont voisins). On privilégie les jours les plus
+    # éloignés de la sortie longue pour y arriver frais.
+    def _circ(a, b):
+        diff = abs(a - b) % 7
+        return min(diff, 7 - diff)
+
+    quality_days = []
+    other_days = [d for d in days if d != longrun_day]
+    for min_gap in (2, 1):  # on relâche la contrainte seulement si impossible
+        for d in sorted(other_days, key=lambda x: -_circ(x, longrun_day)):
+            if len(quality_days) >= quality_slots:
+                break
+            if d in quality_days:
+                continue
+            if _circ(d, longrun_day) >= min_gap and all(_circ(d, q) >= 2 for q in quality_days):
+                quality_days.append(d)
+        if len(quality_days) >= quality_slots:
+            break
+    quality_days = set(quality_days)
+
     sessions = []
     quality_used = 0
     for i, d in enumerate(days):
@@ -113,7 +135,7 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
                 "contenu": "Allure régulière, hydratation ; c'est la séance qui construit l'endurance.",
                 "couleur": "🟠",
             })
-        elif quality_used < quality_slots:
+        elif d in quality_days:
             # alterne VMA / seuil ; varie le contenu selon la semaine
             if quality_used == 0 and week_type != "Récupération":
                 menu = VMA_MENU[week_index % len(VMA_MENU)]
@@ -152,7 +174,8 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
 
 def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
                race: dict = None, horizon_weeks: int = 13,
-               predictions: dict = None, weekly_minutes: int = None) -> dict:
+               predictions: dict = None, weekly_minutes: int = None,
+               pace_overrides: dict = None) -> dict:
     """
     Construit le plan semaine par semaine.
     `race` : {"name", "date" (Timestamp), "distance_km"} ou None.
@@ -161,6 +184,11 @@ def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
     Retourne {"weeks": [...], "paces": {...}, "base_km": float}.
     """
     paces = target_paces(predictions or {})
+    # Ancres « ressenti » de l'athlète (onglet Progression) : quand le coureur
+    # a déclaré ses allures EF/seuil perçues, elles priment sur le modèle —
+    # il se connaît mieux qu'une formule.
+    if pace_overrides:
+        paces.update({k: v for k, v in pace_overrides.items() if v})
 
     # Volume de départ = moyenne réelle des 4 dernières semaines (plancher 10 km)
     base_km = 10.0

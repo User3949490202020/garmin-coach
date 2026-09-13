@@ -21,6 +21,7 @@ import coach_agent
 import gpx_utils
 import sync as sync_module
 import planner
+import cloud_backup
 from providers.garmin import GarminProvider
 from providers import strava
 
@@ -319,8 +320,10 @@ with st.sidebar:
                     sync_module.sync_data(provider, days=days, db_path=USER_DB_PATH)
                     storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
                                              db_path=USER_DB_PATH)
+                    st.session_state.sync_error_msg = None
                     st.success("Synchronisation réussie !")
                 except Exception as e:
+                    st.session_state.sync_error_msg = str(e)
                     st.error(f"Erreur pendant la synchronisation Strava : {e}")
         st.caption("Tes séances Suunto apparaissent dans Strava quelques minutes après la "
                    "synchro de ta montre. La récupération (sommeil/HRV) n'est pas fournie par Strava.")
@@ -353,6 +356,7 @@ with st.sidebar:
                         storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
                                                  db_path=USER_DB_PATH)
                         st.session_state.mfa_pending = False
+                        st.session_state.sync_error_msg = None
                         st.success("Synchronisation réussie !")
                 except Exception as e:
                     st.error(f"Code invalide ou expiré, réessaie. ({e})")
@@ -371,8 +375,10 @@ with st.sidebar:
                         sync_module.sync_data(client, days=days, db_path=USER_DB_PATH)
                         storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
                                                  db_path=USER_DB_PATH)
+                        st.session_state.sync_error_msg = None
                         st.success("Synchronisation réussie !")
                 except Exception as e:
+                    st.session_state.sync_error_msg = str(e)
                     st.error(f"Erreur pendant la synchronisation : {e}")
             # st.rerun() est hors du try : il lève une exception interne de
             # contrôle que le except ne doit pas intercepter.
@@ -401,6 +407,7 @@ with st.sidebar:
                         sync_module.sync_data(_prov, days=days, db_path=USER_DB_PATH)
                         storage.save_manual_note("last_sync_ts", dt.datetime.now().timestamp(),
                                                  db_path=USER_DB_PATH)
+                        st.session_state.sync_error_msg = None
                         st.success("Données à jour !")
                     else:
                         _client = GarminProvider(email=garmin_email, password=garmin_password)
@@ -422,6 +429,7 @@ with st.sidebar:
                         st.session_state.pop("garmin_email", None)
                         st.session_state.session_expired_msg = True
                         st.rerun()
+                    st.session_state.sync_error_msg = str(e)
                     st.warning(f"Synchro automatique impossible pour l'instant — tu peux "
                                f"réessayer avec le bouton. ({e})")
             if st.session_state.get("mfa_pending"):
@@ -433,6 +441,10 @@ with st.sidebar:
         st.caption(f"Dernière synchro : il y a {'moins d’1 h' if _age_h < 1 else f'{int(_age_h)} h'} "
                    "— synchro auto à l'ouverture si plus de 48 h. Le bouton reste là "
                    "pour synchroniser à la demande.")
+
+    if cloud_backup.is_active():
+        st.caption("☁️ Sauvegarde cloud active : tes données et réglages survivent "
+                   "aux mises à jour de l'appli.")
 
     st.divider()
     st.caption("Première utilisation ? Clique sur Synchroniser pour récupérer tes données.")
@@ -466,8 +478,22 @@ HR_MAX = int(_hr_saved[0]) if _hr_saved else HR_MAX_DETECTED
 # Karvonen (Z1-Z5 en % de réserve cardiaque). Sans données (Strava), défaut 55.
 HR_REST = analysis.current_rest_hr(wellness)
 
-tab_coach, tab_strava, tab_seances, tab_recup, tab_charge, tab_plan, tab_vma, tab_sante = st.tabs(
-    ["💬 Le Coach", "📊 Momentum", "🏃 Séances", "😴 Récupération",
+# --- Santé des données : visible en PLEINE PAGE, pas dans le menu replié ---
+if st.session_state.get("sync_error_msg"):
+    st.error("⚠️ **La dernière synchronisation a échoué** — les graphiques affichent les "
+             "dernières données reçues. Ouvre le menu latéral (flèche en haut à gauche) et "
+             f"relance la synchronisation. Détail : {st.session_state.sync_error_msg}")
+elif not wellness.empty:
+    _last_wellness = pd.to_datetime(wellness["date"]).max()
+    _gap_days = (pd.Timestamp.now().normalize() - _last_wellness.normalize()).days
+    if _gap_days >= 3:
+        st.warning(f"📡 **Rien reçu depuis {_gap_days} jours** (dernière donnée : "
+                   f"{_last_wellness.strftime('%d/%m')}). Le plus souvent : la montre n'a pas "
+                   "synchronisé avec l'appli Garmin Connect du téléphone — ouvre-la, attends la "
+                   "synchro, puis relance la synchronisation ici (menu latéral).")
+
+tab_coach, tab_progress, tab_strava, tab_seances, tab_recup, tab_charge, tab_plan, tab_vma, tab_sante = st.tabs(
+    ["💬 Le Coach", "🧭 Progression", "📊 Momentum", "🏃 Séances", "😴 Récupération",
      "📈 Charge & Risque", "🗓️ Plan", "🚀 VMA", "🩺 Santé"]
 )
 
@@ -669,6 +695,136 @@ with tab_coach:
             if "gemini_client" in st.session_state:
                 del st.session_state.gemini_client
             st.rerun()
+
+# ----------------------------------------------------------------------
+# Progression — profil du coureur, ancres ressenties, dominante du moment
+# ----------------------------------------------------------------------
+with tab_progress:
+    st.subheader("🧭 Faire progresser TON profil")
+    st.caption("Le vrai sujet du coaching : pas afficher des chiffres, mais savoir **quoi "
+               "travailler, toi, maintenant**. Trois briques : ton ressenti (tu te connais "
+               "mieux qu'une formule), ton profil mesuré, et la dominante du moment.")
+
+    def _fmt_pace_s(sec):
+        return f"{int(sec // 60)}:{int(sec % 60):02d}/km" if sec else "—"
+
+    # --- 1. Tes allures ressenties (les ancres) ---
+    st.markdown("**🎙️ Tes allures ressenties — dis-nous comment TU te sens**")
+    st.caption("La science le confirme : chez un coureur régulier, la perception de l'effort "
+               "est un excellent estimateur des seuils physiologiques — pas besoin de labo. "
+               "Réponds avec ton vécu, pas avec ce que tu aimerais valoir : ces deux allures "
+               "servent d'ancres à tes zones ET aux allures de ton plan.")
+    _saved_ef = storage.read_manual_note("ressenti_ef_pace_s", db_path=USER_DB_PATH)
+    _saved_sv2 = storage.read_manual_note("ressenti_sv2_pace_s", db_path=USER_DB_PATH)
+
+    def _pace_input(label, help_txt, saved, key, default_s):
+        cur = int(saved[0]) if saved else default_s
+        c1, c2 = st.columns(2)
+        mn = c1.number_input(f"{label} — min", 2, 9, cur // 60, key=f"{key}_mn", help=help_txt)
+        sc = c2.number_input(f"{label} — s", 0, 59, cur % 60, step=5, key=f"{key}_sc")
+        return int(mn * 60 + sc)
+
+    ef_in = _pace_input("Allure EF (tu peux parler en phrases entières)",
+                        "L'allure que tu tiendrais des heures en discutant : le test de la "
+                        "parole. Si tu hésites entre deux, prends la plus lente.",
+                        _saved_ef, "ressenti_ef", 360)
+    sv2_in = _pace_input("Allure seuil (à fond ~1 h, 3-4 mots max d'affilée)",
+                         "L'allure maximale que tu tiendrais environ une heure en course : "
+                         "au-dessus, ça bascule vite dans le rouge.",
+                         _saved_sv2, "ressenti_sv2", 280)
+    if st.button("💾 Enregistrer mes allures ressenties"):
+        storage.save_manual_note("ressenti_ef_pace_s", float(ef_in), db_path=USER_DB_PATH)
+        storage.save_manual_note("ressenti_sv2_pace_s", float(sv2_in), db_path=USER_DB_PATH)
+        st.success("Ancres enregistrées — tes zones et ton plan s'alignent sur ton ressenti.")
+        st.rerun()
+
+    # Confrontation ressenti vs modèle (pédagogie, pas sanction)
+    _vma_prog = analysis.vma_estimate_curve(activities, laps, hr_max=HR_MAX, months=12) \
+        if not activities.empty else pd.DataFrame()
+    _vma_now = float(_vma_prog["vma_kmh"].iloc[-1]) if not _vma_prog.empty else None
+    if _saved_ef and _vma_now:
+        _model_ef_lo = 3600 / (_vma_now * 0.76)   # borne rapide de la Z2 (s/km)
+        if _saved_ef[0] < _model_ef_lo - 10:
+            st.warning(f"🧐 Ton EF ressentie ({_fmt_pace_s(_saved_ef[0])}) est plus rapide que "
+                       f"la zone EF issue de ta vVMA (~{_fmt_pace_s(_model_ef_lo)} et plus lent). "
+                       "L'erreur la plus répandue chez les coureurs : des footings trop rapides "
+                       "qui fatiguent sans construire. Refais le test de la parole honnêtement "
+                       "sur ta prochaine sortie — en phrases ENTIÈRES.")
+        else:
+            st.success("✅ Ton EF ressentie est cohérente avec ton profil mesuré — bon signe : "
+                       "tu te connais bien.")
+
+    st.divider()
+
+    # --- 2. Ton profil de coureur ---
+    st.markdown("**📇 Ton profil mesuré — forces et chantier prioritaire**")
+    if activities.empty:
+        st.info("Synchronise tes séances pour établir ton profil.")
+    else:
+        _preds_prog = analysis.predict_race_times(activities, months=6)
+        prof = analysis.runner_profile(activities, laps, HR_MAX, HR_REST, _vma_now, _preds_prog)
+        ind = prof["indicateurs"]
+        pc = st.columns(4)
+        pc[0].metric("vVMA estimée", f"{ind.get('vma_kmh', '—')} km/h",
+                     help="Ta « cylindrée » : la vitesse maximale aérobie estimée sur tes séances.")
+        _vseuil = 3600 / _saved_sv2[0] if _saved_sv2 else ind.get("v10k_kmh")
+        pc[1].metric("Vitesse seuil", f"{_vseuil:.1f} km/h" if _vseuil else "—",
+                     help="Ton allure ressentie « ~1 h à fond » si renseignée, sinon ta v10K prédite.")
+        pc[2].metric("Indice d'endurance", ind.get("indice_endurance", "—"),
+                     help="v10K ÷ vVMA : la fraction de ton moteur que tu tiens dans la durée. "
+                          "0.82-0.88 = normal entraîné, plus haut = profil diesel.")
+        pc[3].metric("Dérive cardiaque", f"{ind.get('derive_mediane_pct', '—')} %",
+                     help="Médiane de tes dernières sorties longues : < 5 % = base aérobie solide.")
+
+        if prof["chantiers"]:
+            dom, niveau, conseil = prof["chantiers"][0]
+            if niveau == "faible":
+                st.warning(f"🎯 **Ton chantier prioritaire : {dom}.** {conseil}")
+            else:
+                st.info(f"🎯 **Ta dominante la plus rentable : {dom}.** {conseil}")
+            with st.expander("Le détail domaine par domaine"):
+                _icons = {"faible": "🔴 À travailler", "correct": "🟡 Correct", "fort": "🟢 Point fort"}
+                for dom, niveau, conseil in prof["chantiers"]:
+                    st.markdown(f"**{dom}** — {_icons[niveau]}  \n{conseil}")
+
+    st.divider()
+
+    # --- 3. La dominante du moment (périodisation) ---
+    st.markdown("**🗓️ Ta dominante du moment**")
+    _race_note = storage.read_text_note("plan_race", db_path=USER_DB_PATH)
+    _race_prog = json.loads(_race_note[0]) if _race_note and _race_note[0] else {}
+    _weeks_left_prog = None
+    if _race_prog.get("date"):
+        _weeks_left_prog = max(int((pd.Timestamp(_race_prog["date"]) - pd.Timestamp.now()).days / 7), 0)
+    phase = analysis.race_phase(_weeks_left_prog)
+    if _weeks_left_prog is not None:
+        st.markdown(f"Course dans **{_weeks_left_prog} semaine(s)** → phase : **{phase['nom']}** — "
+                    f"dominante : **{phase['dominante']}**")
+    else:
+        st.markdown(f"**{phase['nom']}** — dominante : **{phase['dominante']}** "
+                    "*(renseigne ta course dans l'onglet 🗓️ Plan pour une périodisation datée)*")
+    st.write(phase["detail"])
+    _phases_tbl = pd.DataFrame([
+        {"Phase": "Base", "Quand": "> 10 sem. de la course",
+         "Dominante": "Volume facile + économie (gammes, renfo)"},
+        {"Phase": "Développement", "Quand": "6-10 sem.",
+         "Dominante": "VMA / seuil — selon ton chantier prioritaire"},
+        {"Phase": "Spécifique", "Quand": "3-5 sem.",
+         "Dominante": "Allure de course (blocs à l'allure cible)"},
+        {"Phase": "Affûtage", "Quand": "1-2 sem.",
+         "Dominante": "Fraîcheur : volume -40/50 %, intensité courte conservée"},
+    ])
+    _phases_tbl["Phase"] = _phases_tbl["Phase"].apply(
+        lambda x: f"➡️ {x}" if x == phase["nom"] else x)
+    st.dataframe(_phases_tbl, hide_index=True, width='stretch')
+
+    st.caption("📚 L'approche de cet onglet : zones ancrées sur la perception de l'effort "
+               "(test de la parole) plutôt que sur des seuils de laboratoire, répartition "
+               "pyramidale du volume, et dominante choisie selon TON facteur limitant. "
+               "Pour creuser : [guide lactate & endurance (Ibex Outdoor)]"
+               "(https://www.ibexoutdoor.fr/post/guide-lactate-endurance) · "
+               "[l'étude sur l'entraînement guidé par le ressenti (PubMed)]"
+               "(https://pubmed.ncbi.nlm.nih.gov/33118479/).")
 
 # ----------------------------------------------------------------------
 # Stats Strava
@@ -1200,28 +1356,33 @@ with tab_recup:
             st.caption("Basé sur ta FC repos, ta HRV, ton Body Battery, **ta note de sommeil** "
                        "(mesurée par la montre ou saisie à la main), ton stress et tes pas, "
                        "comparés à ta moyenne perso des 28 derniers jours. Tes siestes comptent "
-                       "aussi. Repère : 50 = ta moyenne — un lendemain de VMA en « moyen bas », "
-                       "c'est normal, pas inquiétant.")
-            # 4 zones à couleur fixe : 50 = ta moyenne perso.
+                       "aussi. **Repère : 50 = ton état normal — et pour quelqu'un qui "
+                       "s'entraîne régulièrement sans douleur, l'état normal est un BON état** "
+                       "(vert). Un lendemain de VMA en orange, c'est le corps qui encaisse : "
+                       "normal, pas inquiétant.")
+            # 4 zones à couleur fixe. Le score compare l'athlète à SA moyenne
+            # perso : par construction il gravite autour de 50, donc 50 = état
+            # habituel = bonne récup pour un athlète régulier — d'où un vert qui
+            # commence dès 48 (au-dessus de 62 : nettement mieux que d'habitude).
             def _recovery_zone(v):
                 if pd.isna(v):
                     return "Donnée manquante"
                 if v < 35:
                     return "Mauvaise récup"
-                if v < 50:
-                    return "Moyen bas"
-                if v <= 65:
-                    return "Moyen bon"
-                return "Très bon"
+                if v < 48:
+                    return "Récup moyenne"
+                if v <= 62:
+                    return "Bonne récup"
+                return "Excellente récup"
             rec = rec.copy()
             rec["zone"] = rec["recovery_score"].apply(_recovery_zone)
             fig = px.bar(
                 rec, x="date", y="recovery_score", color="zone",
-                color_discrete_map={"Mauvaise récup": "crimson", "Moyen bas": "#F28C28",
-                                    "Moyen bon": "#F2C230", "Très bon": "seagreen",
+                color_discrete_map={"Mauvaise récup": "crimson", "Récup moyenne": "#F28C28",
+                                    "Bonne récup": "#7CB342", "Excellente récup": "seagreen",
                                     "Donnée manquante": "lightgray"},
-                category_orders={"zone": ["Mauvaise récup", "Moyen bas", "Moyen bon",
-                                          "Très bon", "Donnée manquante"]},
+                category_orders={"zone": ["Mauvaise récup", "Récup moyenne", "Bonne récup",
+                                          "Excellente récup", "Donnée manquante"]},
             )
             fig.update_layout(legend_title_text="")
             st.plotly_chart(mobile_friendly(fig), width='stretch', config=PLOTLY_CONFIG)
@@ -1520,8 +1681,21 @@ with tab_plan:
     if activities.empty:
         st.info("Synchronise tes séances pour générer ton plan.")
     else:
+        # Ancres « ressenti » (onglet Progression) : elles priment sur le modèle
+        _anchor_ef = storage.read_manual_note("ressenti_ef_pace_s", db_path=USER_DB_PATH)
+        _anchor_sv2 = storage.read_manual_note("ressenti_sv2_pace_s", db_path=USER_DB_PATH)
+        _overrides = {}
+        if _anchor_ef:
+            _overrides["facile"] = float(_anchor_ef[0])
+            _overrides["longue"] = float(_anchor_ef[0]) - 10  # la longue, un poil plus soutenue
+        if _anchor_sv2:
+            _overrides["seuil"] = float(_anchor_sv2[0])
         plan = planner.build_plan(activities, plan_nb, plan_day, race=plan_race,
-                                  predictions=plan_preds, weekly_minutes=plan_min)
+                                  predictions=plan_preds, weekly_minutes=plan_min,
+                                  pace_overrides=_overrides)
+        if _overrides:
+            st.caption("🎙️ Allures du plan ancrées sur **ton ressenti** (onglet Progression) "
+                       "— pas seulement sur le modèle.")
 
         # --- 4. Adaptation à la forme du jour ---
         _rec_today = None
@@ -1534,7 +1708,7 @@ with tab_plan:
                 st.error(f"🔴 **Forme du jour : {_rec_today:.0f}/100.** Le plan s'adapte : "
                          "remplace la séance prévue aujourd'hui par un footing Z1 très court "
                          "ou un repos complet — la séance manquée se rattrape, pas la blessure.")
-            elif _rec_today < 50:
+            elif _rec_today < 48:
                 st.warning(f"🟠 **Forme du jour : {_rec_today:.0f}/100.** Si une séance de "
                            "qualité est prévue aujourd'hui, allège-la (moins de fractions, "
                            "allure haute de fourchette) ou décale-la à demain.")

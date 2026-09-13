@@ -111,6 +111,10 @@ def sync_data(provider: DataProvider, days: int = 30,
     sync_activities(provider, months=activities_months, weather_limit=weather_limit, db_path=db_path)
     sync_cross_training(provider, months=activities_months, db_path=db_path)
     sync_wellness(provider, days=days, db_path=db_path)
+    # Toute la masse de données vient d'arriver : UNE sauvegarde cloud complète
+    # (les upserts individuels ne sont volontairement pas accrochés).
+    import cloud_backup
+    cloud_backup.backup(db_path or storage.DEFAULT_DB_PATH, force=True)
 
 
 def run_sync(email: str = None, password: str = None, days: int = 30,

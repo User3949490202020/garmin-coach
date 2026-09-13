@@ -15,6 +15,8 @@ en même temps (risque de mélanger les données de deux utilisateurs).
 import sqlite3
 import json
 import hashlib
+
+import cloud_backup
 from pathlib import Path
 
 _BASE_DIR = Path(__file__).parent
@@ -144,7 +146,11 @@ def get_db_path_for_user(email: str) -> Path:
     data_dir = _BASE_DIR / "data"
     data_dir.mkdir(exist_ok=True)
     user_hash = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
-    return data_dir / f"garmin_coach_{user_hash}.db"
+    path = data_dir / f"garmin_coach_{user_hash}.db"
+    # Déploiement frais (stockage éphémère) : on restaure la base depuis la
+    # sauvegarde cloud si elle existe — l'utilisateur retrouve tout.
+    cloud_backup.restore_if_missing(path)
+    return path
 
 
 def get_conn(db_path=None):
@@ -226,8 +232,7 @@ def upsert_sleep(row: dict, db_path=None):
     )
     conn.commit()
     conn.close()
-
-
+    cloud_backup.backup(db_path or DEFAULT_DB_PATH, min_interval_s=60)
 def save_manual_note(key: str, value: float, db_path=None):
     """Enregistre une note saisie à la main (ex: note sommeil 0-100), datée du jour."""
     import datetime as _dt
@@ -239,8 +244,7 @@ def save_manual_note(key: str, value: float, db_path=None):
     )
     conn.commit()
     conn.close()
-
-
+    cloud_backup.backup(db_path or DEFAULT_DB_PATH, min_interval_s=30)
 def read_manual_note(key: str, db_path=None):
     """Retourne (valeur, date_de_saisie) ou None si jamais saisie."""
     conn = get_conn(db_path)
@@ -264,8 +268,7 @@ def save_text_note(key: str, value: str, db_path=None):
     )
     conn.commit()
     conn.close()
-
-
+    cloud_backup.backup(db_path or DEFAULT_DB_PATH, min_interval_s=30)
 def read_text_note(key: str, db_path=None):
     """Retourne (texte, date_de_saisie) ou None si jamais saisi."""
     conn = get_conn(db_path)
@@ -291,8 +294,7 @@ def append_chat_message(role: str, content: str, db_path=None):
                     (SELECT rowid FROM chat_history ORDER BY ts DESC LIMIT 200)""")
     conn.commit()
     conn.close()
-
-
+    cloud_backup.backup(db_path or DEFAULT_DB_PATH, min_interval_s=120)
 def read_chat_history(hours: int = 12, db_path=None) -> list[dict]:
     """Messages des `hours` dernières heures, du plus ancien au plus récent."""
     import datetime as _dt
@@ -353,6 +355,7 @@ def assign_shoe(activity_id: str, shoe_id, db_path=None):
 def _sessions_conn():
     data_dir = _BASE_DIR / "data"
     data_dir.mkdir(exist_ok=True)
+    cloud_backup.restore_if_missing(data_dir / "sessions.db")
     conn = sqlite3.connect(data_dir / "sessions.db")
     conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY, source TEXT, ident TEXT, created_at TEXT)""")
@@ -380,6 +383,7 @@ def touch_usage(session_id: str, ident: str, source: str):
     )
     conn.commit()
     conn.close()
+    cloud_backup.backup(_BASE_DIR / "data" / "sessions.db", min_interval_s=600)
 
 
 def read_usage():
@@ -403,6 +407,7 @@ def create_session_token(source: str, ident: str) -> str:
                  (token, source, ident, _dt.date.today().isoformat()))
     conn.commit()
     conn.close()
+    cloud_backup.backup(_BASE_DIR / "data" / "sessions.db", force=True)
     return token
 
 
@@ -522,8 +527,7 @@ def save_strava_tokens(tokens: dict, db_path=None):
     )
     conn.commit()
     conn.close()
-
-
+    cloud_backup.backup(db_path or DEFAULT_DB_PATH, min_interval_s=30)
 def read_strava_tokens(db_path=None):
     """Retourne les jetons Strava enregistrés (dict) ou None si absent."""
     conn = get_conn(db_path)

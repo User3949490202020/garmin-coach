@@ -1192,3 +1192,142 @@ def zone_target_paces(vma_kmh: float) -> dict:
         sec = 3600 / (vma_kmh * pct)
         return f"{int(sec // 60)}:{int(sec % 60):02d}"
     return {z: f"{p(hi)} à {p(lo)}/km" for z, (lo, hi) in ZONE_PACE_PCT.items()}
+
+
+# ----------------------------------------------------------------------
+# Profil individuel & dominantes d'entraînement (onglet Progression)
+# ----------------------------------------------------------------------
+def runner_profile(activities, laps, hr_max, hr_rest, vma_kmh, predictions) -> dict:
+    """
+    Dresse le profil physiologique du coureur À PARTIR DE SES DONNÉES et
+    identifie son chantier prioritaire. Logique (classique en physiologie
+    de l'entraînement) :
+      - VMA (vVMA estimée) = la cylindrée ;
+      - indice d'endurance = v10K / vVMA (fraction de la VMA tenable sur
+        ~40-55 min) : c'est LE marqueur de l'endurance spécifique —
+        ~0.82-0.88 chez le coureur entraîné, > 0.88 = très endurant ;
+      - dérive cardiaque médiane = solidité de la base aérobie ;
+      - part du volume en basse intensité = qualité de la répartition
+        (l'entraînement pyramidal/polarisé des élites : ~80 % facile).
+    Retourne {indicateurs: {...}, chantiers: [(domaine, niveau, conseil)...]}
+    où niveau appartient à {faible, correct, fort} — 1er chantier = priorité.
+    """
+    out = {"indicateurs": {}, "chantiers": []}
+    ind = out["indicateurs"]
+
+    # v10K : l'allure "seuil de fait" d'un amateur (effort de ~40-55 min)
+    v10k = None
+    if predictions and "10K" in predictions:
+        pace10 = predictions["10K"]["temps_s"] / 10  # s/km
+        v10k = 3600 / pace10
+        ind["v10k_kmh"] = round(v10k, 1)
+    if vma_kmh:
+        ind["vma_kmh"] = round(vma_kmh, 1)
+
+    endurance_idx = None
+    if v10k and vma_kmh:
+        endurance_idx = v10k / vma_kmh
+        ind["indice_endurance"] = round(endurance_idx, 2)
+
+    drift_med = None
+    try:
+        drift = cardiac_drift(activities, laps)
+        if not drift.empty:
+            drift_med = float(drift["drift_pct"].tail(5).median())
+            ind["derive_mediane_pct"] = round(drift_med, 1)
+    except Exception:
+        pass
+
+    easy_share = None
+    try:
+        pol = polarization(activities, hr_max=hr_max)
+        if pol and pol.get("facile") is not None:
+            easy_share = pol["facile"] / 100  # polarization renvoie un %
+            ind["part_facile_pct"] = round(pol["facile"])
+    except Exception:
+        pass
+
+    # --- Diagnostic par domaine : (domaine, niveau, conseil, priorité) ---
+    diags = []
+    if endurance_idx is not None:
+        if endurance_idx < 0.80:
+            diags.append(("Endurance spécifique (seuil)", "faible",
+                          "Ta VMA est bonne mais tu n'en tiens qu'une petite fraction dans la "
+                          "durée : ton moteur est bridé par le châssis. Dominante conseillée : "
+                          "SEUIL (2 x 8-12 min en Z4) chaque semaine + volume facile. C'est le "
+                          "levier n°1 pour tes chronos du 10 km au semi.", 0))
+        elif endurance_idx <= 0.88:
+            diags.append(("Endurance spécifique (seuil)", "correct",
+                          "Fraction de VMA tenable dans la norme du coureur entraîné. Un bloc "
+                          "seuil régulier la fera encore monter.", 2))
+        else:
+            diags.append(("Endurance spécifique (seuil)", "fort",
+                          "Tu tiens une très haute fraction de ta VMA : profil diesel accompli. "
+                          "Pour progresser encore, c'est la VMA elle-même qu'il faut tirer vers "
+                          "le haut (elle plafonne tes allures).", 3))
+    if endurance_idx is not None and endurance_idx > 0.88 and vma_kmh:
+        diags.append(("VMA (cylindrée)", "faible" if endurance_idx > 0.90 else "correct",
+                      "Ton endurance exploite déjà presque tout ton moteur : la marge est dans "
+                      "la VMA. Dominante conseillée : 1 vraie séance VMA/semaine (30/30, 400 m) "
+                      "+ gammes et lignes droites pour la vitesse de base.", 1))
+    if drift_med is not None:
+        if drift_med > 8:
+            diags.append(("Base aérobie", "faible",
+                          "Ta FC dérive nettement sur les sorties longues : la fondation "
+                          "manque. Dominante conseillée : volume Z2 + sorties longues "
+                          "progressives — peu spectaculaire, mais c'est ce qui débloquera "
+                          "tout le reste.", 0))
+        elif drift_med > 5:
+            diags.append(("Base aérobie", "correct",
+                          "Dérive cardiaque modérée : base correcte, continue à nourrir le "
+                          "volume facile.", 2))
+        else:
+            diags.append(("Base aérobie", "fort",
+                          "FC stable sur la durée : ta base aérobie est solide.", 3))
+    if easy_share is not None:
+        if easy_share < 0.65:
+            diags.append(("Répartition de l'entraînement", "faible",
+                          "Moins de 65 % de ton volume est facile : tu cours trop souvent "
+                          "« moyennement dur », la zone qui fatigue sans faire progresser "
+                          "(les élites : ~80 % facile). Ralentis tes footings — c'est "
+                          "gratuit et ça paie.", 1))
+        else:
+            diags.append(("Répartition de l'entraînement", "fort",
+                          "Répartition saine, proche du 80/20 des élites : la grosse "
+                          "majorité de ton volume est facile.", 3))
+    # Économie de course : toujours travaillable, jamais « finie »
+    diags.append(("Économie de course", "correct",
+                  "La qualité silencieuse : gammes 2x/sem, lignes droites en fin de footing, "
+                  "renfo (squats, mollets, gainage) et cadence adaptée réduisent le coût de "
+                  "chaque foulée. Rentable à tous les niveaux, surtout en phase de base.", 2))
+
+    diags.sort(key=lambda d: d[3])
+    out["chantiers"] = [(d[0], d[1], d[2]) for d in diags]
+    return out
+
+
+def race_phase(weeks_to_race) -> dict:
+    """Phase de préparation en fonction de l'échéance (périodisation classique)."""
+    if weeks_to_race is None:
+        return {"nom": "Entretien / base", "dominante": "Volume facile + économie de course",
+                "detail": "Pas de course programmée : le moment idéal pour élargir la base "
+                          "(volume Z2, gammes, renfo) et corriger ton chantier prioritaire."}
+    if weeks_to_race > 10:
+        return {"nom": "Base", "dominante": "Volume facile + économie de course",
+                "detail": "Loin de l'échéance : on construit la fondation. Volume Z2 en "
+                          "progression, gammes/renfo chaque semaine, 1 rappel de VMA courte "
+                          "pour entretenir la cylindrée."}
+    if weeks_to_race > 5:
+        return {"nom": "Développement", "dominante": "VMA et seuil (selon ton chantier)",
+                "detail": "Le cœur de la prépa : 2 séances de qualité/semaine bien espacées — "
+                          "la dominante suit ton chantier prioritaire, l'autre qualité en "
+                          "rappel."}
+    if weeks_to_race > 2:
+        return {"nom": "Spécifique", "dominante": "Allure de course",
+                "detail": "On convertit : blocs à l'allure CIBLE de ta course (ex : 3 x 3 km "
+                          "allure 10 km, ou 2 x 5 km allure semi), sortie longue avec fin à "
+                          "l'allure. Le corps apprend SON allure du jour J."}
+    return {"nom": "Affûtage", "dominante": "Fraîcheur",
+            "detail": "Le travail est fait : on réduit le volume (-40 à -50 %) en gardant un "
+                      "peu d'intensité courte. Chaque km de trop coûte maintenant plus qu'il "
+                      "ne rapporte."}
