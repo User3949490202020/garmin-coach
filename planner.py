@@ -27,8 +27,8 @@ DAY_PATTERNS = {
     2: [2, 6],
     3: [1, 3, 6],
     4: [1, 3, 5, 6],
-    5: [0, 1, 3, 5, 6],
-    6: [0, 1, 3, 4, 5, 6],
+    5: [1, 2, 4, 5, 6],
+    6: [0, 1, 2, 4, 5, 6],
     7: [0, 1, 2, 3, 4, 5, 6],
 }
 
@@ -79,7 +79,17 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
     days = sorted(set(days))[:nb_seances] if len(set(days)) >= nb_seances else sorted(set(days))
     if longrun_day not in days:
         days[-1] = longrun_day
-    days = sorted(days)
+    days = sorted(set(days))
+    # Si le jour de sortie longue chevauchait le motif, il manque un jour :
+    # on complète avec le jour le plus « aéré » (loin des jours déjà pris).
+    def _circ0(a, b):
+        diff = abs(a - b) % 7
+        return min(diff, 7 - diff)
+    while len(days) < min(nb_seances, 7):
+        cand = max((d for d in range(7) if d not in days),
+                   key=lambda d: min(_circ0(d, e) for e in days))
+        days.append(cand)
+        days.sort()
 
     # Cas particulier : une seule séance par semaine = une sortie unique
     n = len(days)
@@ -103,27 +113,31 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
     easy_slots = max(n - 1 - quality_slots, 0)
     easy_km = round(remaining / easy_slots, 1) if easy_slots else 0
 
-    # Placement des séances de qualité : JAMAIS deux jours durs consécutifs
-    # (la sortie longue compte comme un jour dur), la semaine étant cyclique
-    # (dimanche et lundi sont voisins). On privilégie les jours les plus
-    # éloignés de la sortie longue pour y arriver frais.
+    # Placement des séances de qualité — règles de coach :
+    #   1. 72 h MINIMUM entre deux qualités (mardi/vendredi, mercredi/samedi…
+    #      jamais mardi/jeudi) — c'est le critère n°1 ;
+    #   2. puis le plus d'air possible autour de la sortie longue.
+    # La semaine est cyclique (dimanche et lundi sont voisins). On évalue
+    # toutes les combinaisons possibles et on garde la meilleure.
+    from itertools import combinations as _combos
+
     def _circ(a, b):
         diff = abs(a - b) % 7
         return min(diff, 7 - diff)
 
-    quality_days = []
     other_days = [d for d in days if d != longrun_day]
-    for min_gap in (2, 1):  # on relâche la contrainte seulement si impossible
-        for d in sorted(other_days, key=lambda x: -_circ(x, longrun_day)):
-            if len(quality_days) >= quality_slots:
-                break
-            if d in quality_days:
-                continue
-            if _circ(d, longrun_day) >= min_gap and all(_circ(d, q) >= 2 for q in quality_days):
-                quality_days.append(d)
-        if len(quality_days) >= quality_slots:
-            break
-    quality_days = set(quality_days)
+    quality_days = set()
+    n_q = min(quality_slots, len(other_days))
+    if n_q:
+        best = None
+        for combo in _combos(other_days, n_q):
+            q_gaps = [_circ(a, b) for a, b in _combos(combo, 2)] or [7]
+            long_gap = min(_circ(d, longrun_day) for d in combo)
+            score = (min(q_gaps), long_gap,
+                     sum(_circ(d, longrun_day) for d in combo))
+            if best is None or score > best[0]:
+                best = (score, combo)
+        quality_days = set(best[1])
 
     sessions = []
     quality_used = 0
