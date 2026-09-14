@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allure — Politique de confidentialité</title>
+<meta name="description" content="Politique de confidentialité d'Allure : quelles données, où elles sont stockées, comment elles sont utilisées, et vos droits.">
+<style>
+  :root{
+    --ivoire:#FBFAF7; --lin:#F0EDE6; --nuit:#22303F; --laiton:#B08D57;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:var(--ivoire);color:var(--nuit);line-height:1.65}
+  .wrap{max-width:680px;margin:0 auto;padding:0 22px}
+  header{padding:56px 0 20px;text-align:center}
+  .logo{font-size:15px;letter-spacing:.35em;text-transform:uppercase;color:var(--laiton);font-weight:700}
+  .logo a{color:inherit;text-decoration:none}
+  h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:16px 0 8px;font-weight:800}
+  .maj{font-size:13px;color:#93a1b0}
+  section{padding:26px 0 4px}
+  h2{font-size:19px;font-weight:800;margin-bottom:8px;color:var(--nuit)}
+  p, li{font-size:15.5px;color:#31404f;margin-bottom:10px}
+  ul{padding-left:22px;margin-bottom:10px}
+  .note{background:var(--lin);border:1px solid #e2ddd2;border-radius:14px;padding:16px 18px;
+        font-size:14.5px;color:#4a5a6d;margin:10px 0}
+  a{color:var(--laiton)}
+  footer{padding:44px 0 60px;text-align:center;font-size:13px;color:#93a1b0}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="logo"><a href="./">Allure</a></div>
+  <h1>Politique de confidentialité</h1>
+  <p class="maj">Dernière mise à jour : 14 septembre 2026</p>
+</header>
+
+<div class="wrap">
+
+<section>
+  <h2>Qui sommes-nous ?</h2>
+  <p><strong>Allure</strong> est un service de coaching de course à pied édité par une
+  entreprise individuelle (micro-entreprise) immatriculée en France. Il transforme les
+  données d'entraînement et de récupération de votre montre connectée en analyses et
+  conseils personnalisés. Le service est actuellement en <strong>version bêta</strong>,
+  accessible sur invitation.</p>
+  <p>Contact pour toute question relative à vos données :
+  <a href="mailto:vincent.fuentes@allure-coach.fr">vincent.fuentes@allure-coach.fr</a></p>
+</section>
+
+<section>
+  <h2>Quelles données sont traitées ?</h2>
+  <ul>
+    <li><strong>Données de compte</strong> : votre adresse email, utilisée pour identifier
+    votre espace personnel.</li>
+    <li><strong>Données d'entraînement et de bien-être</strong>, récupérées avec votre accord
+    depuis votre compte Garmin Connect ou Strava : séances (distance, allure, fréquence
+    cardiaque, cadence…), sommeil, variabilité cardiaque, niveau d'énergie et de stress.</li>
+    <li><strong>Données saisies par vous</strong> : objectif, course préparée, allures
+    ressenties, nuits saisies manuellement.</li>
+    <li><strong>Données d'usage anonymes-légères</strong> : dates et durées de visite,
+    pour améliorer le service. Aucun traceur publicitaire, aucun cookie tiers.</li>
+  </ul>
+  <div class="note">🔑 <strong>Votre mot de passe Garmin n'est jamais enregistré sur nos
+  serveurs.</strong> Il sert uniquement à ouvrir la connexion avec Garmin, puis un jeton
+  technique prend le relais. La connexion Strava utilise OAuth : vous ne saisissez aucun
+  mot de passe chez nous.</div>
+</section>
+
+<section>
+  <h2>À quoi servent-elles ?</h2>
+  <p>À une seule chose : <strong>votre propre coaching</strong>. Vos données alimentent vos
+  graphiques, vos zones cardiaques, votre plan et votre score de récupération. Chaque
+  utilisateur dispose d'une base de données séparée : personne d'autre ne voit vos données,
+  et elles ne sont jamais croisées entre utilisateurs.</p>
+  <p><strong>Vos données ne sont jamais vendues ni partagées à des fins commerciales ou
+  publicitaires.</strong></p>
+</section>
+
+<section>
+  <h2>Le coach IA</h2>
+  <p>Pour générer ses réponses, le coach envoie un <strong>résumé statistique de vos
+  données</strong> (allures, fréquence cardiaque, sommeil…) à l'API Gemini de Google —
+  sans votre nom ni votre adresse email. Pendant la bêta, nous utilisons l'offre gratuite
+  de ce service : Google peut techniquement exploiter ces échanges pour améliorer ses
+  modèles. Si cela vous gêne, vous pouvez utiliser l'intégralité de l'application sans
+  jamais ouvrir l'onglet Coach — rien n'est envoyé dans ce cas.</p>
+</section>
+
+<section>
+  <h2>Où sont-elles stockées ?</h2>
+  <ul>
+    <li>L'application est hébergée sur Streamlit Community Cloud (infrastructure située
+    aux États-Unis).</li>
+    <li>Les sauvegardes de vos données sont hébergées chez Supabase, dans
+    l'<strong>Union européenne (Irlande)</strong>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Vos droits</h2>
+  <p>Conformément au RGPD, vous disposez d'un droit d'accès, de rectification, de
+  portabilité et d'effacement de vos données. <strong>Sur simple email, nous supprimons
+  l'intégralité de vos données</strong> — définitivement, sous 30 jours au plus.
+  Vous pouvez également introduire une réclamation auprès de la CNIL (cnil.fr).</p>
+</section>
+
+<section>
+  <h2>Ce qu'Allure n'est pas</h2>
+  <p>Allure est un outil d'entraînement, <strong>pas un dispositif médical</strong> : ses
+  indicateurs et conseils ne remplacent jamais un avis médical. Garmin est une marque de
+  Garmin Ltd. ; Strava est une marque de Strava, Inc. — Allure est un produit indépendant,
+  non affilié à ces sociétés.</p>
+</section>
+
+</div>
+
+<footer>
+  <div class="logo"><a href="./">Allure</a></div>
+  <p style="margin-top:10px">Le meilleur coach, c'est toi.</p>
+</footer>
+
+</body>
+</html>
