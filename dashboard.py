@@ -1704,6 +1704,31 @@ with tab_plan:
     plan_day = dc3.selectbox("Jour de la sortie longue", list(range(7)),
                              index=int(saved_day[0]) if saved_day else 6,
                              format_func=lambda i: planner.FR_DAYS[i], key="plan_day")
+    # Jours de qualité choisis par l'athlète (optionnel — sinon placement auto 72 h)
+    _saved_qd = storage.read_text_note("plan_quality_days", db_path=USER_DB_PATH)
+    _default_qd = [planner.FR_DAYS[int(x)] for x in _saved_qd[0].split(",")
+                   if x.strip().isdigit()] if _saved_qd and _saved_qd[0] else []
+    _qd_names = st.multiselect(
+        "Jours de qualité préférés (optionnel, 2 max)", planner.FR_DAYS,
+        default=_default_qd, max_selections=2, key="plan_qd",
+        help="Laisse vide pour le placement automatique (72 h entre deux qualités). "
+             "Ton organisation prime : mercredi + samedi, mardi + vendredi… "
+             "à toi de choisir.")
+    plan_quality_pref = [planner.FR_DAYS.index(n) for n in _qd_names]
+    _qd_str = ",".join(str(d) for d in plan_quality_pref)
+    if (_saved_qd[0] if _saved_qd else "") != _qd_str:
+        storage.save_text_note("plan_quality_days", _qd_str, db_path=USER_DB_PATH)
+    if plan_quality_pref:
+        def _circ_ui(a, b):
+            _d = abs(a - b) % 7
+            return min(_d, 7 - _d)
+        if len(plan_quality_pref) == 2 and _circ_ui(*plan_quality_pref) < 3:
+            st.caption("⚠️ Tes deux jours de qualité sont à moins de 72 h — c'est ton choix "
+                       "et il sera respecté, mais assure-toi de bien récupérer entre les deux.")
+        if plan_day in plan_quality_pref:
+            st.caption("ℹ️ Un de tes jours de qualité tombe sur la sortie longue : il sera "
+                       "ignoré (la longue reste la séance de ce jour-là).")
+
     if not saved_nb or int(saved_nb[0]) != plan_nb:
         storage.save_manual_note("plan_nb_seances", float(plan_nb), db_path=USER_DB_PATH)
     if not saved_min or int(saved_min[0]) != plan_min:
@@ -1725,7 +1750,8 @@ with tab_plan:
             _overrides["seuil"] = float(_anchor_sv2[0])
         plan = planner.build_plan(activities, plan_nb, plan_day, race=plan_race,
                                   predictions=plan_preds, weekly_minutes=plan_min,
-                                  pace_overrides=_overrides)
+                                  pace_overrides=_overrides,
+                                  quality_pref=plan_quality_pref)
         if _overrides:
             st.caption("🎙️ Allures du plan ancrées sur **ton ressenti** (onglet Progression) "
                        "— pas seulement sur le modèle.")

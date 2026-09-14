@@ -1,5 +1,5 @@
 # Rebuild forcé de l'environnement Streamlit Cloud (recharge propre des modules).
-# Qualités espacées de 72h mini (mardi/vendredi) + motifs hebdo corrigés.
+# Jours de qualité au choix de l'athlète (sinon placement auto 72h).
 garminconnect==0.3.6
 pandas>=2.2
 numpy>=1.26

@@ -71,8 +71,13 @@ def target_paces(predictions: dict) -> dict:
 
 
 def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
-                   week_type: str, week_index: int, paces: dict) -> list[dict]:
-    """Détail des séances d'une semaine donnée (jour, type, distance, allure, contenu)."""
+                   week_type: str, week_index: int, paces: dict,
+                   quality_pref: list = None) -> list[dict]:
+    """
+    Détail des séances d'une semaine donnée (jour, type, distance, allure, contenu).
+    `quality_pref` : jours de qualité imposés par l'athlète (0=lundi..6=dimanche) —
+    son choix prime sur le placement automatique.
+    """
     days = list(DAY_PATTERNS[min(max(nb_seances, 1), 7)])
     # place la sortie longue le jour choisi par l'utilisateur
     days = [d for d in days[:-1] if d != longrun_day] + [longrun_day]
@@ -114,8 +119,10 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
     easy_km = round(remaining / easy_slots, 1) if easy_slots else 0
 
     # Placement des séances de qualité — règles de coach :
-    #   1. 72 h MINIMUM entre deux qualités (mardi/vendredi, mercredi/samedi…
-    #      jamais mardi/jeudi) — c'est le critère n°1 ;
+    #   0. les jours CHOISIS par l'athlète priment (mercredi/samedi si c'est
+    #      son organisation : question de choix, pas de dogme) ;
+    #   1. pour le placement automatique : 72 h MINIMUM entre deux qualités
+    #      (mardi/vendredi, mercredi/samedi… jamais mardi/jeudi) ;
     #   2. puis le plus d'air possible autour de la sortie longue.
     # La semaine est cyclique (dimanche et lundi sont voisins). On évalue
     # toutes les combinaisons possibles et on garde la meilleure.
@@ -125,19 +132,34 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
         diff = abs(a - b) % 7
         return min(diff, 7 - diff)
 
-    other_days = [d for d in days if d != longrun_day]
-    quality_days = set()
-    n_q = min(quality_slots, len(other_days))
-    if n_q:
+    # Jours imposés par l'athlète : on les intègre au motif de la semaine
+    # (chacun remplace le footing le plus proche s'il n'y figurait pas).
+    prefs = [d for d in (quality_pref or []) if d != longrun_day][:quality_slots]
+    for d in prefs:
+        if d not in days:
+            easies = [x for x in days if x != longrun_day and x not in prefs]
+            if not easies:
+                break
+            closest = min(easies, key=lambda x: _circ(x, d))
+            days.remove(closest)
+            days.append(d)
+            days.sort()
+    prefs = [d for d in prefs if d in days]
+
+    other_days = [d for d in days if d != longrun_day and d not in prefs]
+    quality_days = set(prefs)
+    n_q = min(quality_slots - len(prefs), len(other_days))
+    if n_q > 0:
         best = None
         for combo in _combos(other_days, n_q):
-            q_gaps = [_circ(a, b) for a, b in _combos(combo, 2)] or [7]
+            allq = list(combo) + prefs
+            q_gaps = [_circ(a, b) for a, b in _combos(allq, 2)] or [7]
             long_gap = min(_circ(d, longrun_day) for d in combo)
             score = (min(q_gaps), long_gap,
                      sum(_circ(d, longrun_day) for d in combo))
             if best is None or score > best[0]:
                 best = (score, combo)
-        quality_days = set(best[1])
+        quality_days |= set(best[1])
 
     sessions = []
     quality_used = 0
@@ -189,7 +211,7 @@ def _week_sessions(nb_seances: int, longrun_day: int, week_km: float,
 def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
                race: dict = None, horizon_weeks: int = 13,
                predictions: dict = None, weekly_minutes: int = None,
-               pace_overrides: dict = None) -> dict:
+               pace_overrides: dict = None, quality_pref: list = None) -> dict:
     """
     Construit le plan semaine par semaine.
     `race` : {"name", "date" (Timestamp), "distance_km"} ou None.
@@ -256,7 +278,8 @@ def build_plan(activities: pd.DataFrame, nb_seances: int, longrun_day: int = 6,
             week_type = "Progression" if vol < peak_cap else "Stabilité"
             week_km = round(vol, 1)
 
-        sessions = _week_sessions(nb_seances, longrun_day, week_km, week_type, i, paces)
+        sessions = _week_sessions(nb_seances, longrun_day, week_km, week_type, i, paces,
+                                  quality_pref=quality_pref)
         if week_type == "Course" and race:
             # remplace la sortie longue par la course elle-même
             for s in sessions:
