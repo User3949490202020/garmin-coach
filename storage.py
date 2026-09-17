@@ -281,6 +281,30 @@ def read_text_note(key: str, db_path=None):
     return (row[0], row[1]) if row else None
 
 
+def read_text_notes_prefix(prefix: str, db_path=None) -> dict:
+    """Toutes les notes texte dont la clé commence par `prefix` : {clé: valeur}."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM text_notes WHERE key LIKE ?", (prefix + "%",)
+        ).fetchall()
+    finally:
+        conn.close()
+    return {k: v for k, v in rows}
+
+
+def read_manual_notes_prefix(prefix: str, db_path=None) -> dict:
+    """Toutes les notes numériques dont la clé commence par `prefix` : {clé: valeur}."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT key, value FROM manual_notes WHERE key LIKE ?", (prefix + "%",)
+        ).fetchall()
+    finally:
+        conn.close()
+    return {k: v for k, v in rows}
+
+
 # ----------------------------------------------------------------------
 # Historique de conversation avec le coach IA (par utilisateur)
 # ----------------------------------------------------------------------

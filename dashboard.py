@@ -499,8 +499,8 @@ elif not wellness.empty:
                    "synchronisé avec l'appli Garmin Connect du téléphone — ouvre-la, attends la "
                    "synchro, puis relance la synchronisation ici (menu latéral).")
 
-tab_coach, tab_progress, tab_strava, tab_seances, tab_recup, tab_charge, tab_plan, tab_vma, tab_sante = st.tabs(
-    ["💬 Le Coach", "🧭 Progression", "📊 Momentum", "🏃 Séances", "😴 Récupération",
+tab_coach, tab_progress, tab_labo, tab_strava, tab_seances, tab_recup, tab_charge, tab_plan, tab_vma, tab_sante = st.tabs(
+    ["💬 Le Coach", "🧭 Progression", "🧪 Labo", "📊 Momentum", "🏃 Séances", "😴 Récupération",
      "📈 Charge & Risque", "🗓️ Plan", "🚀 VMA", "🩺 Santé"]
 )
 
@@ -596,6 +596,39 @@ with tab_coach:
             cross_training=cross_training,
             objective=storage.read_text_note("objectif", db_path=USER_DB_PATH),
         )
+
+        # --- Le RESSENTI de l'athlète (onglet Labo) : prioritaire sur les capteurs ---
+        _ctx_feel_lines = []
+        _feels_ctx = storage.read_text_notes_prefix("feel_", db_path=USER_DB_PATH)
+        if _feels_ctx:
+            _recent_feels = sorted(_feels_ctx.items())[-7:]
+            for k, v in _recent_feels:
+                try:
+                    _f = json.loads(v)
+                    _note = f" — « {_f['note']} »" if _f.get("note") else ""
+                    _ctx_feel_lines.append(f"- {k[5:]} : fatigue {_f.get('fatigue', '?')}/10{_note}")
+                except Exception:
+                    continue
+        _rpe_ctx = storage.read_manual_notes_prefix("rpe_", db_path=USER_DB_PATH)
+        if _rpe_ctx and not activities.empty:
+            _acts_by_id = activities.set_index(activities["activity_id"].astype(str))
+            _rpe_lines = []
+            for k, v in _rpe_ctx.items():
+                if k[4:] in _acts_by_id.index:
+                    _a = _acts_by_id.loc[k[4:]]
+                    _rpe_lines.append((str(_a["date"])[:10],
+                                       f"- {str(_a['date'])[:10]} {_a['name']} : effort perçu {v:.0f}/10"))
+            for _, l in sorted(_rpe_lines)[-8:]:
+                _ctx_feel_lines.append(l)
+        _lthr_ctx = storage.read_manual_note("lthr", db_path=USER_DB_PATH)
+        if _lthr_ctx:
+            _ctx_feel_lines.append(f"- FC seuil MESURÉE sur le terrain (test 30 min) : "
+                                   f"{_lthr_ctx[0]:.0f} bpm — plus fiable que toute formule")
+        if _ctx_feel_lines:
+            context_summary += (
+                "\n\n### 🎙️ RESSENTI DÉCLARÉ PAR L'ATHLÈTE (à privilégier sur les capteurs "
+                "en cas de contradiction : les capteurs se trompent, le ressenti d'un "
+                "coureur régulier rarement)\n" + "\n".join(_ctx_feel_lines))
 
         if "chat_session" not in st.session_state:
             # Si une conversation récente existe (reprise après coupure), on la
@@ -858,6 +891,199 @@ with tab_progress:
                "pyramidale du volume, et dominante choisie selon TON facteur limitant. "
                "Pour creuser : [l'étude sur l'entraînement guidé par le "
                "ressenti (PubMed)](https://pubmed.ncbi.nlm.nih.gov/33118479/).")
+
+# ----------------------------------------------------------------------
+# Labo — onglet expérimental : ressenti, charge subjective (session-RPE),
+# divergence montre/athlète, test terrain LTHR (zones individualisées)
+# ----------------------------------------------------------------------
+with tab_labo:
+    st.subheader("🧪 Le Labo — ton ressenti au centre")
+    st.caption("Expérimental. Postulat : **les capteurs se trompent, toi rarement.** La "
+               "recherche valide le ressenti coté proprement (méthode « session-RPE » de "
+               "Foster) comme l'un des outils de suivi de charge les plus fiables — et les "
+               "seuils individuels varient trop pour qu'une formule sur la FCmax suffise. "
+               "Ici : ta fatigue quotidienne, l'effort perçu de tes séances, et un test "
+               "terrain pour des zones VRAIMENT à toi.")
+
+    # ---------- 1. Check-in du jour ----------
+    st.markdown("**📓 Check-in du jour — comment tu te sens, toi**")
+    _today_key = f"feel_{dt.date.today().isoformat()}"
+    _today_feel = storage.read_text_note(_today_key, db_path=USER_DB_PATH)
+    _saved_feel = json.loads(_today_feel[0]) if _today_feel and _today_feel[0] else {}
+    fc1, fc2 = st.columns([1, 2])
+    feel_fatigue = fc1.slider("Fatigue générale (1 = frais, 10 = épuisé)", 1, 10,
+                              int(_saved_feel.get("fatigue", 4)), key="feel_fatigue")
+    feel_note = fc2.text_input("Un mot sur ta journée (optionnel)",
+                               value=_saved_feel.get("note", ""),
+                               placeholder="Ex : mal dormi, grosse journée de boulot, jambes lourdes...",
+                               key="feel_note")
+    if st.button("💾 Enregistrer mon ressenti du jour"):
+        storage.save_text_note(_today_key, json.dumps(
+            {"fatigue": feel_fatigue, "note": feel_note.strip()}), db_path=USER_DB_PATH)
+        st.success("Noté. Ton coach IA en tiendra compte dans ses réponses.")
+        st.rerun()
+
+    # ---------- 2. Effort perçu par séance (session-RPE de Foster) ----------
+    st.divider()
+    st.markdown("**🏷️ Tes séances, notées par TOI (effort perçu, échelle 1-10)**")
+    st.caption("Après chaque séance, note l'effort GLOBAL ressenti (1 = promenade, 10 = "
+               "maximal). Charge subjective = note × durée (méthode Foster, validée par "
+               "20 ans de recherche) — c'est elle qui capte ce que ta montre rate : la "
+               "chaleur, le stress, la nuit pourrie.")
+    _rpe_saved = storage.read_manual_notes_prefix("rpe_", db_path=USER_DB_PATH)
+    if not activities.empty:
+        _recent = activities.copy()
+        _recent["date"] = pd.to_datetime(_recent["date"])
+        _recent = _recent.sort_values("date", ascending=False).head(10)
+        _unrated = _recent[~_recent["activity_id"].astype(str)
+                           .isin({k[4:] for k in _rpe_saved})]
+        if not _unrated.empty:
+            _opts = {f"{r['date'].strftime('%d/%m')} — {r['name']} "
+                     f"({r['distance_km']:.1f} km)": str(r["activity_id"])
+                     for _, r in _unrated.iterrows()}
+            rc1, rc2 = st.columns([2, 1])
+            _sel = rc1.selectbox("Séance à noter", list(_opts.keys()), key="rpe_sel")
+            _rpe_val = rc2.slider("Effort perçu", 1, 10, 5, key="rpe_val")
+            if st.button("💾 Noter cette séance"):
+                storage.save_manual_note(f"rpe_{_opts[_sel]}", float(_rpe_val),
+                                         db_path=USER_DB_PATH)
+                st.rerun()
+        else:
+            st.caption("✅ Toutes tes séances récentes sont notées — continue comme ça, "
+                       "c'est l'or de cet onglet.")
+
+        # Charge subjective hebdo vs charge cardiaque (comparaison des 2 mondes)
+        _rated = activities.copy()
+        _rated["date"] = pd.to_datetime(_rated["date"])
+        _rated["rpe"] = _rated["activity_id"].astype(str).map(
+            {k[4:]: v for k, v in _rpe_saved.items()})
+        _rated = _rated.dropna(subset=["rpe"])
+        if len(_rated) >= 3:
+            _rated["srpe_load"] = _rated["rpe"] * (_rated["duration_s"].fillna(0) / 60)
+            _wk_srpe = _rated.groupby(_rated["date"].dt.to_period("W"))["srpe_load"].sum()
+            _hr_load = analysis.training_load(activities, hr_max=HR_MAX, hr_rest=HR_REST)
+            _hr_load["date"] = pd.to_datetime(_hr_load["date"])
+            _wk_hr = _hr_load.groupby(_hr_load["date"].dt.to_period("W"))["load"].sum()
+            _wk = pd.DataFrame({"Ressenti (sRPE)": _wk_srpe, "Montre (FC)": _wk_hr}).dropna()
+            if len(_wk) >= 2:
+                # Normalisation : les deux échelles ramenées à 100 = leur moyenne,
+                # pour comparer les FORMES des courbes, pas les unités.
+                _wk_n = _wk / _wk.mean() * 100
+                _wk_n.index = _wk_n.index.to_timestamp()
+                st.markdown("**Charge ressentie vs charge mesurée (base 100 = ta moyenne)**")
+                fig_srpe = go.Figure()
+                fig_srpe.add_trace(go.Scatter(x=_wk_n.index, y=_wk_n["Ressenti (sRPE)"],
+                                              name="Ressenti (sRPE)", mode="lines+markers",
+                                              line=dict(color="#B08D57", width=3)))
+                fig_srpe.add_trace(go.Scatter(x=_wk_n.index, y=_wk_n["Montre (FC)"],
+                                              name="Montre (FC)", mode="lines+markers",
+                                              line=dict(color="#3D85C6", width=2, dash="dot")))
+                fig_srpe.update_layout(yaxis_title="Charge (base 100)", height=300)
+                st.plotly_chart(mobile_friendly(fig_srpe), width='stretch', config=PLOTLY_CONFIG)
+                st.caption("👀 **La lecture qui compte : quand l'or (ressenti) grimpe au-dessus "
+                           "du bleu (montre)**, ton corps encaisse plus que ce que la FC "
+                           "raconte — chaleur, stress, sommeil… C'est le signal d'alléger, "
+                           "même si la montre dit que tout va bien.")
+
+    # ---------- 3. Divergence montre / ressenti ----------
+    _feels = storage.read_text_notes_prefix("feel_", db_path=USER_DB_PATH)
+    if len(_feels) >= 3 and not wellness.empty:
+        _feel_rows = []
+        for k, v in _feels.items():
+            try:
+                _d = pd.Timestamp(k[5:])
+                _f = json.loads(v).get("fatigue")
+                if _f is not None:
+                    _feel_rows.append({"date": _d, "forme_ressentie": (10 - float(_f)) / 9 * 100})
+            except Exception:
+                continue
+        _feel_df = pd.DataFrame(_feel_rows)
+        _rec_df2 = analysis.recovery_score(wellness, sleep)
+        if not _feel_df.empty and not _rec_df2.empty:
+            _cmp = _feel_df.merge(
+                _rec_df2[["date", "recovery_score"]], on="date", how="inner").sort_values("date")
+            if len(_cmp) >= 3:
+                st.divider()
+                st.markdown("**⚖️ Ta montre vs toi (14 derniers jours)**")
+                _cmp = _cmp.tail(14)
+                fig_div = go.Figure()
+                fig_div.add_trace(go.Scatter(x=_cmp["date"], y=_cmp["forme_ressentie"],
+                                             name="Forme RESSENTIE", mode="lines+markers",
+                                             line=dict(color="#B08D57", width=3)))
+                fig_div.add_trace(go.Scatter(x=_cmp["date"], y=_cmp["recovery_score"],
+                                             name="Score montre", mode="lines+markers",
+                                             line=dict(color="#3D85C6", width=2, dash="dot")))
+                fig_div.update_layout(yaxis=dict(range=[0, 100]), height=300)
+                st.plotly_chart(mobile_friendly(fig_div), width='stretch', config=PLOTLY_CONFIG)
+                _last = _cmp.iloc[-1]
+                if _last["recovery_score"] - _last["forme_ressentie"] > 25:
+                    st.warning("🟠 Aujourd'hui, ta montre te dit « ça va » mais TOI tu te sens "
+                               "fatigué. **On croit toi** : allège la séance du jour.")
+                elif _last["forme_ressentie"] - _last["recovery_score"] > 25:
+                    st.info("🔵 Tu te sens mieux que ce que dit ta montre — bon signe, mais "
+                            "garde un œil : les données objectives précèdent parfois le ressenti.")
+
+    # ---------- 4. Test terrain : tes zones VRAIMENT individuelles (LTHR) ----------
+    st.divider()
+    st.markdown("**🔬 Le test terrain 30 min — tes zones à TOI, pas celles d'une formule**")
+    st.caption("La recherche est claire : le seuil lactique tombe entre **75 et 95 % de la "
+               "FCmax selon les individus** — une formule unique (Karvonen comprise) se "
+               "trompe forcément pour certains. Le test de référence hors labo : le "
+               "**30 minutes seul, à fond régulier** (protocole Friel, corrélé aux mesures "
+               "labo). Ta FC moyenne des 20 dernières minutes ≈ ta FC seuil (LTHR).")
+    with st.expander("📋 Le protocole complet (à faire reposé, sur terrain plat)"):
+        st.markdown(
+            "1. **Échauffement** : 15 min faciles + 3 lignes droites\n"
+            "2. **Le test : 30 min seul, comme une course** — parts vite mais régulier "
+            "(l'erreur classique : partir trop vite et exploser à mi-course)\n"
+            "3. **Appuie sur LAP à la 10ᵉ minute** — ta FC moyenne des 20 dernières "
+            "minutes = ta **FC seuil (LTHR)**\n"
+            "4. Retour au calme 10 min très facile\n\n"
+            "⚠️ Seul (pas en course officielle : l'adrénaline fausse ~5 bpm), pas de côte, "
+            "pas de canicule. À refaire toutes les **6-8 semaines** : le seuil bouge avec "
+            "l'entraînement — c'est même un excellent marqueur de progression.")
+    _saved_lthr = storage.read_manual_note("lthr", db_path=USER_DB_PATH)
+    lc1, lc2 = st.columns([1, 2])
+    lthr_in = lc1.number_input("Ta FC seuil mesurée (bpm)", 120, 210,
+                               int(_saved_lthr[0]) if _saved_lthr else 172, key="lthr_in")
+    if lc1.button("💾 Enregistrer ma FC seuil"):
+        storage.save_manual_note("lthr", float(lthr_in), db_path=USER_DB_PATH)
+        st.success("FC seuil enregistrée !")
+        st.rerun()
+    if _saved_lthr:
+        _lthr = _saved_lthr[0]
+        # Zones Friel (course à pied), ancrées sur le seuil MESURÉ
+        _friel = [
+            ("Z1 Récupération", 0.00, 0.85, "#A8CCEC"),
+            ("Z2 Endurance", 0.85, 0.90, "#7EB3DC"),
+            ("Z3 Tempo", 0.90, 0.94, "#54A0CE"),
+            ("Z4 Seuil", 0.94, 1.00, "#3D85C6"),
+            ("Z5 Au-dessus du seuil", 1.00, 1.06, "#0B3866"),
+        ]
+        _kzones = analysis.hr_zones(HR_MAX, HR_REST)
+        _rows_z = []
+        for (name, lo, hi, _c), (_, kz) in zip(_friel, _kzones.iterrows()):
+            _rows_z.append({
+                "Zone": name,
+                "🔬 Tes zones MESURÉES (LTHR)": f"{int(_lthr*lo) if lo else '<'}–{int(_lthr*hi)} bpm"
+                if lo else f"< {int(_lthr*hi)} bpm",
+                "📐 Formule (Karvonen)": f"{kz['bpm_min']}–{kz['bpm_max']} bpm",
+            })
+        with lc2:
+            st.markdown(f"**Tes zones ancrées sur ta FC seuil mesurée ({_lthr:.0f} bpm) :**")
+            st.dataframe(pd.DataFrame(_rows_z), hide_index=True, width='stretch')
+            st.caption("Là où les deux colonnes divergent, **crois la colonne mesurée** — "
+                       "c'est tout l'intérêt du test. Si l'écart est grand, dis-le à ton "
+                       "coach IA : il en tiendra compte.")
+
+    st.caption("📚 Sources : [session-RPE — validité (Frontiers)]"
+               "(https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2017.00612/full) · "
+               "[variabilité individuelle des seuils (PMC)]"
+               "(https://pmc.ncbi.nlm.nih.gov/articles/PMC10611166/) · "
+               "[protocole 30 min de Joe Friel]"
+               "(https://joefrieltraining.com/determining-your-lthr/) · "
+               "[test de la parole vs seuils (PubMed)]"
+               "(https://pubmed.ncbi.nlm.nih.gov/21774751/)")
 
 # ----------------------------------------------------------------------
 # Stats Strava
