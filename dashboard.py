@@ -624,6 +624,13 @@ with tab_coach:
         if _lthr_ctx:
             _ctx_feel_lines.append(f"- FC seuil MESURÉE sur le terrain (test 30 min) : "
                                    f"{_lthr_ctx[0]:.0f} bpm — plus fiable que toute formule")
+        _sv1_ctx = storage.read_manual_note("sv1_hr", db_path=USER_DB_PATH)
+        _sv2_ctx = storage.read_manual_note("sv2_hr", db_path=USER_DB_PATH)
+        if _sv1_ctx and _sv2_ctx:
+            _ctx_feel_lines.append(
+                f"- Seuils déclarés au test de la parole : SV1 ≈ {_sv1_ctx[0]:.0f} bpm "
+                f"(fin des phrases entières), SV2 ≈ {_sv2_ctx[0]:.0f} bpm (3-4 mots max) — "
+                "utilise-les comme bornes des zones plutôt que les formules")
         if _ctx_feel_lines:
             context_summary += (
                 "\n\n### 🎙️ RESSENTI DÉCLARÉ PAR L'ATHLÈTE (à privilégier sur les capteurs "
@@ -1025,7 +1032,59 @@ with tab_labo:
 
     # ---------- 4. Test terrain : tes zones VRAIMENT individuelles (LTHR) ----------
     st.divider()
-    st.markdown("**🔬 Le test terrain 30 min — tes zones à TOI, pas celles d'une formule**")
+    st.markdown("**🎚️ Tes zones : l'escalier de fiabilité**")
+    st.caption("Trois niveaux, du plus simple au plus précis — monte quand TU veux :\n"
+               "**1️⃣ La formule** (FCmax + Karvonen, onglet VMA) : déjà en place, correcte pour "
+               "démarrer · **2️⃣ Le test facile à la sensation** (ci-dessous, faisable sur "
+               "n'importe quel footing) · **3️⃣ La mesure** : test 30 min à fond, ou ton test "
+               "d'effort de laboratoire analysé par l'IA.")
+
+    # ---------- Niveau 2 : test facile à la sensation (test de la parole) ----------
+    with st.expander("2️⃣ Le test facile — à la sensation, sur un footing normal (15 min)"):
+        st.markdown(
+            "Le **test de la parole**, validé scientifiquement face aux seuils mesurés en "
+            "labo. Sur une sortie, accélère TRÈS progressivement par paliers de 2-3 min et "
+            "note deux moments sur ta montre :\n"
+            "1. 🗣️ **La FC à partir de laquelle tu ne peux PLUS faire de phrases "
+            "entières** (tu passes en bouts de phrase) → c'est ton **seuil 1** (SV1), la "
+            "frontière de l'endurance fondamentale ;\n"
+            "2. 😮‍💨 **La FC où tu ne sors plus que 3-4 mots d'affilée** → tu es "
+            "proche de ton **seuil 2** (SV2), la limite du tenable ~1 h.\n\n"
+            "Reporte ces deux FC ici — tes zones s'ancrent dessus, plus besoin d'attendre "
+            "un test à fond.")
+        tc1, tc2 = st.columns(2)
+        _saved_sv1 = storage.read_manual_note("sv1_hr", db_path=USER_DB_PATH)
+        _saved_sv2h = storage.read_manual_note("sv2_hr", db_path=USER_DB_PATH)
+        sv1_in = tc1.number_input("FC seuil 1 — fin des phrases entières (bpm)", 100, 200,
+                                  int(_saved_sv1[0]) if _saved_sv1 else 155, key="sv1_in")
+        sv2h_in = tc2.number_input("FC seuil 2 — 3-4 mots max (bpm)", 120, 210,
+                                   int(_saved_sv2h[0]) if _saved_sv2h else 172, key="sv2h_in")
+        if st.button("💾 Enregistrer mes deux seuils ressentis"):
+            if sv2h_in <= sv1_in:
+                st.error("Ton seuil 2 doit être plus haut que ton seuil 1 — vérifie tes valeurs.")
+            else:
+                storage.save_manual_note("sv1_hr", float(sv1_in), db_path=USER_DB_PATH)
+                storage.save_manual_note("sv2_hr", float(sv2h_in), db_path=USER_DB_PATH)
+                st.success("Seuils enregistrés — zones ancrées sur TON test, et transmises au coach.")
+                st.rerun()
+        if _saved_sv1 and _saved_sv2h:
+            _s1, _s2 = _saved_sv1[0], _saved_sv2h[0]
+            _anch = pd.DataFrame([
+                {"Zone": "Z1 Récupération", "FC": f"< {int(_s1 - 12)} bpm",
+                 "Repère": "Tu pourrais chanter"},
+                {"Zone": "Z2 Endurance", "FC": f"{int(_s1 - 12)}–{int(_s1)} bpm",
+                 "Repère": "Phrases entières — l'essentiel de ton volume"},
+                {"Zone": "Z3 Tempo", "FC": f"{int(_s1)}–{int(_s2 - 8)} bpm",
+                 "Repère": "Bouts de phrase — à doser"},
+                {"Zone": "Z4 Seuil", "FC": f"{int(_s2 - 8)}–{int(_s2 + 2)} bpm",
+                 "Repère": "3-4 mots — fractions longues"},
+                {"Zone": "Z5 VMA", "FC": f"> {int(_s2 + 2)} bpm",
+                 "Repère": "Parler ? Non. — fractions courtes"},
+            ])
+            st.markdown("**Tes zones ancrées sur TES deux seuils ressentis :**")
+            st.dataframe(_anch, hide_index=True, width='stretch')
+
+    st.markdown("**3️⃣ 🔬 Le test terrain 30 min — la mesure de référence hors labo**")
     st.caption("La recherche est claire : le seuil lactique tombe entre **75 et 95 % de la "
                "FCmax selon les individus** — une formule unique (Karvonen comprise) se "
                "trompe forcément pour certains. Le test de référence hors labo : le "
@@ -1075,6 +1134,46 @@ with tab_labo:
             st.caption("Là où les deux colonnes divergent, **crois la colonne mesurée** — "
                        "c'est tout l'intérêt du test. Si l'écart est grand, dis-le à ton "
                        "coach IA : il en tiendra compte.")
+
+    # ---------- Niveau 3 bis : test d'effort de laboratoire analysé par l'IA ----------
+    with st.expander("🧑‍⚕️ Tu as fait un test d'effort en labo ? Fais-le lire à l'IA (PDF)"):
+        st.caption("Dépose le compte-rendu PDF de ton test d'effort (médecin du sport, "
+                   "laboratoire) : l'IA en extrait FCmax, seuils ventilatoires SV1/SV2, "
+                   "VMA/VO2max… et te dit quoi reporter dans tes zones. Le document est "
+                   "envoyé à l'IA (Gemini) pour analyse, jamais conservé sur le serveur.")
+        _pdf_up = st.file_uploader("Ton compte-rendu de test d'effort", type=["pdf"],
+                                   key="labo_pdf")
+        if _pdf_up is not None and st.button("🔍 Analyser mon test d'effort"):
+            with st.spinner("Lecture et analyse du document..."):
+                try:
+                    from pypdf import PdfReader
+                    _reader = PdfReader(_pdf_up)
+                    _pdf_text = "\n".join((pg.extract_text() or "") for pg in _reader.pages)[:15000]
+                    if len(_pdf_text.strip()) < 100:
+                        st.warning("Ce PDF semble être un scan sans texte lisible — "
+                                   "demande la version numérique à ton médecin, ou reporte "
+                                   "les valeurs à la main dans les niveaux 2 et 3.")
+                    else:
+                        _pdf_analysis = coach_agent.one_shot_advice(
+                            "COMPTE-RENDU DE TEST D'EFFORT DE L'ATHLÈTE :\n" + _pdf_text,
+                            focus="Tu lis le compte-rendu d'un test d'effort de course à pied. "
+                                  "Extrais et présente clairement, si présents : FCmax mesurée, "
+                                  "FC et allure/vitesse au seuil ventilatoire 1 (SV1/aerobic "
+                                  "threshold), FC et allure au seuil 2 (SV2/anaérobie), "
+                                  "VMA/VO2max, et toute zone d'entraînement prescrite. Puis "
+                                  "indique à l'athlète EXACTEMENT quelles valeurs reporter "
+                                  "dans l'appli : FCmax (onglet VMA), FC seuil 1 et FC seuil 2 "
+                                  "(niveau 2 du Labo), FC seuil (niveau 3). Termine par une "
+                                  "phrase sur ce que ce test dit de son profil. Si une donnée "
+                                  "est absente, dis-le simplement sans l'inventer.",
+                            api_key=own_gemini_key,
+                        )
+                        st.markdown(_pdf_analysis)
+                        st.caption("✍️ Reporte les valeurs indiquées dans les champs "
+                                   "ci-dessus — elles deviendront la référence de tes zones "
+                                   "et seront transmises à ton coach IA.")
+                except Exception as e:
+                    st.error(f"Analyse impossible pour l'instant : {e}")
 
     st.caption("📚 Sources : [session-RPE — validité (Frontiers)]"
                "(https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2017.00612/full) · "
